@@ -22,7 +22,9 @@ def backend() -> str:
 # ---------- Supabase ----------
 def _sb(method: str, table: str, params=None, body=None):
     key = config.get("SUPABASE_KEY")
-    base = config.get("SUPABASE_URL").rstrip("/")
+    base = config.get("SUPABASE_URL").strip().rstrip("/")
+    if not base.startswith("http"):
+        base = "https://" + base
     if base.endswith("/rest/v1"):
         base = base[: -len("/rest/v1")]
     url = base + f"/rest/v1/{table}"
