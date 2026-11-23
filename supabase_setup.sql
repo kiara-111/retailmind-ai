@@ -36,3 +36,8 @@ create table if not exists deliveries (
 -- Nobody can read these tables with the public key. Only the secret key used by the app can.
 alter table subscriptions enable row level security;
 alter table deliveries enable row level security;
+
+-- Make sure the app (secret key = service_role) can always read and write both tables
+grant usage on schema public to service_role;
+grant all on table subscriptions to service_role;
+grant all on table deliveries to service_role;
