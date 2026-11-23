@@ -9,7 +9,7 @@ Student prototype, CBS International Business School. Not an official REWE produ
 | Web app (chat, automations, knowledge base, log, system check) | `app.py` | Streamlit Community Cloud |
 | Knowledge base | `knowledge_base.xlsx` | in this repository |
 | Grounded generation | `core/llm.py`, `core/engine.py` | Anthropic API |
-| Channels: email, WhatsApp, LinkedIn draft | `core/channels.py` | SMTP, Twilio |
+| Channels: email, Telegram, LinkedIn draft | `core/channels.py` | SMTP, Telegram Bot API |
 | Storage | `core/store.py`, `supabase_setup.sql` | Supabase |
 | Scheduler | `scheduler.py`, `.github/workflows/scheduler.yml` | GitHub Actions |
 

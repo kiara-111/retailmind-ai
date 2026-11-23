@@ -21,7 +21,7 @@ st.markdown(
 
 DISCLAIMER = "Student prototype, CBS International Business School. Not an official REWE product."
 PRESETS = [
-    ("Weekly research report on WhatsApp", {"format": "report", "channel": "whatsapp", "freq_type": "weekly", "weekday": 4, "hour": 8}),
+    ("Weekly research report on Telegram", {"format": "report", "channel": "telegram", "freq_type": "weekly", "weekday": 4, "hour": 8}),
     ("LinkedIn post draft every Monday", {"format": "linkedin", "channel": "email", "freq_type": "weekly", "weekday": 0, "hour": 8}),
     ("Key insights by email every 3 days", {"format": "insights", "channel": "email", "freq_type": "every_n_days", "interval_days": 3, "hour": 7}),
 ]
@@ -47,7 +47,7 @@ def gate():
 
 
 def profile_sidebar() -> dict:
-    p = st.session_state.setdefault("profile", {"name": "", "email": "", "whatsapp": ""})
+    p = st.session_state.setdefault("profile", {"name": "", "email": "", "telegram": ""})
     with st.sidebar:
         st.markdown('<div class="rm-kicker">RetailMind AI</div>', unsafe_allow_html=True)
         st.markdown("**Research on demand**")
@@ -61,18 +61,55 @@ def profile_sidebar() -> dict:
         with st.form("profile_form"):
             name = st.text_input("Name", p["name"])
             email = st.text_input("Email", p["email"], help="Your automations are stored under this address.")
-            whatsapp = st.text_input("WhatsApp number", p["whatsapp"], placeholder="+49 170 1234567")
             if st.form_submit_button("Save profile"):
                 if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email.strip()):
                     st.error("Please enter a valid email address.")
                 else:
-                    p.update(name=name.strip(), email=email.strip().lower(), whatsapp=channels.normalise_phone(whatsapp))
+                    p.update(name=name.strip(), email=email.strip().lower())
+                    try:
+                        p["telegram"] = store.telegram_chat_id(p["email"])
+                    except Exception:
+                        p["telegram"] = ""
                     st.rerun()
         if p["email"]:
             st.caption(f"Signed in as {p['email']}")
+            telegram_box(p)
         st.divider()
         st.caption(DISCLAIMER)
     return page
+
+
+def telegram_box(p: dict):
+    st.markdown("**Telegram**")
+    if p.get("telegram"):
+        st.markdown("<span class='rm-pill'>connected</span>", unsafe_allow_html=True)
+        return
+    if not config.has("TELEGRAM_BOT_TOKEN"):
+        st.caption("Telegram is not set up yet (see System check).")
+        return
+    try:
+        link = channels.connect_link(p["email"])
+    except Exception as exc:
+        st.caption(f"Telegram bot not reachable: {exc}")
+        return
+    st.caption("1. Open the bot and press **Start**.  \n2. Come back and click **Check connection**.")
+    st.link_button("Open RetailMind in Telegram", link, use_container_width=True)
+    if st.button("Check connection", use_container_width=True):
+        try:
+            chat_id = channels.find_chat_id(p["email"])
+        except Exception as exc:
+            st.error(str(exc))
+            return
+        if not chat_id:
+            st.warning("No Start message found yet. Open the bot with the button above and press Start.")
+            return
+        p["telegram"] = chat_id
+        try:
+            store.set_telegram_chat_id(p["email"], chat_id)
+            channels.send_telegram(chat_id, f"*RetailMind AI*\nHi {p['name'] or 'there'}, your Telegram is connected. Briefings you set up for Telegram will arrive here.")
+        except Exception:
+            pass
+        st.rerun()
 
 
 def need_profile() -> dict:
@@ -151,10 +188,11 @@ def describe_sub(s: dict) -> str:
 
 
 def save_sub(p: dict, spec: dict):
-    if spec["channel"] == "whatsapp" and len(p["whatsapp"]) < 8:
-        st.error("Add your WhatsApp number to your profile first.")
+    if spec["channel"] == "telegram" and not p.get("telegram"):
+        st.error("Connect Telegram in the sidebar first (under Your profile).")
         return
-    sub = {"user_name": p["name"], "email": p["email"], "whatsapp": p["whatsapp"], **spec}
+    # the column is still called "whatsapp" in the database; it holds the Telegram chat id
+    sub = {"user_name": p["name"], "email": p["email"], "whatsapp": p.get("telegram", ""), **spec}
     sub["topics"] = spec.get("topics") or []
     try:
         store.add_subscription(sub)
@@ -179,7 +217,7 @@ def page_automations():
         with st.form("nl_form"):
             text = st.text_input(
                 "What would you like to receive?",
-                placeholder="Send me a WhatsApp report on loyalty programmes every Friday at 8",
+                placeholder="Send me a Telegram report on loyalty programmes every Friday at 8",
             )
             go = st.form_submit_button("Interpret", type="primary")
         if go and text.strip():
@@ -273,8 +311,7 @@ def page_automations():
                         show_piece(s, result["piece"])
     st.markdown(
         "<p class='rm-note'>Scheduled deliveries are checked twice per hour, so they can arrive up to about "
-        "30 minutes after the chosen time. WhatsApp runs through a test environment: scheduled messages only "
-        "arrive if you have written to the RetailMind number within the last 24 hours.</p>",
+        "30 minutes after the chosen time. If Telegram is not connected, Telegram briefings arrive by email instead.</p>",
         unsafe_allow_html=True,
     )
 
@@ -354,8 +391,9 @@ def page_check():
         "Supabase configured" if store.backend() == "supabase" else "Supabase not configured. Automations only live on this computer and the scheduler cannot see them.")
     row("Email", config.has("SMTP_USER", "SMTP_PASSWORD"),
         f"Sender: {config.get('SMTP_USER')}" if config.has("SMTP_USER", "SMTP_PASSWORD") else "SMTP_USER / SMTP_PASSWORD missing")
-    row("WhatsApp", config.has("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"),
-        f"Twilio sender: {config.get('TWILIO_WHATSAPP_FROM', '+14155238886')}" if config.has("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN") else "TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN missing")
+    row("Telegram", config.has("TELEGRAM_BOT_TOKEN"),
+        "Bot token set" + (" and your chat is connected" if p.get("telegram") else ", your chat is not connected yet")
+        if config.has("TELEGRAM_BOT_TOKEN") else "TELEGRAM_BOT_TOKEN missing")
 
     st.divider()
     st.subheader("Live tests")
@@ -375,23 +413,21 @@ def page_check():
             st.success(channels.send_email(p["email"], "RetailMind AI | Test", "Email delivery works."))
         except Exception as exc:
             st.error(str(exc))
-    if c4.button("Send test WhatsApp", use_container_width=True, disabled=len(p["whatsapp"]) < 8):
+    if c4.button("Send test Telegram", use_container_width=True, disabled=not p.get("telegram")):
         try:
-            st.success(channels.send_whatsapp(p["whatsapp"], "*RetailMind AI*\nWhatsApp delivery works."))
+            st.success(channels.send_telegram(p["telegram"], "*RetailMind AI*\nTelegram delivery works."))
         except Exception as exc:
             st.error(str(exc))
     if not p["email"]:
-        st.caption("Save your profile in the sidebar to enable the email and WhatsApp tests.")
+        st.caption("Save your profile in the sidebar to enable the email test, then connect Telegram there.")
 
     st.divider()
-    st.subheader("Connect your WhatsApp")
-    join = config.get("TWILIO_SANDBOX_JOIN_CODE", "the join code from the Twilio sandbox page")
-    sender = config.get("TWILIO_WHATSAPP_FROM", "+14155238886")
+    st.subheader("Connect your Telegram")
     st.markdown(
-        f"1. Save **{sender}** as a contact.\n"
-        f"2. Send it this WhatsApp message once: `{join}`\n"
-        "3. Wait for the confirmation, then use **Send test WhatsApp** above.\n\n"
-        "The connection is a test environment. Messages can be delivered for 24 hours after you last wrote to the number."
+        "1. Save your profile in the sidebar.\n"
+        "2. Click **Open RetailMind in Telegram** there and press **Start** in Telegram.\n"
+        "3. Click **Check connection**. You get a short welcome message in Telegram.\n\n"
+        "Each person connects once. The connection is stored with their automations."
     )
 
 

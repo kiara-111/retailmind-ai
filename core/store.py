@@ -120,6 +120,27 @@ def delete_subscription(sub_id: str):
     _write(data)
 
 
+def telegram_chat_id(email: str) -> str:
+    """Telegram chat id saved with this person's automations (stored in the column named whatsapp)."""
+    for s in list_subscriptions(email):
+        value = str(s.get("whatsapp") or "")
+        if value.lstrip("-").isdigit():
+            return value
+    return ""
+
+
+def set_telegram_chat_id(email: str, chat_id: str):
+    email = email.strip().lower()
+    if backend() == "supabase":
+        _sb("PATCH", "subscriptions", {"email": f"eq.{email}"}, {"whatsapp": chat_id})
+        return
+    data = _read()
+    for s in data["subscriptions"]:
+        if s["email"] == email:
+            s["whatsapp"] = chat_id
+    _write(data)
+
+
 def log_delivery(entry: dict):
     entry = dict(entry)
     entry["email"] = entry["email"].strip().lower()

@@ -1,4 +1,5 @@
-"""Delivery channels: email over SMTP and WhatsApp over the Twilio API."""
+"""Delivery channels: email over SMTP and Telegram over the Bot API."""
+import hashlib
 import html
 import re
 import smtplib
@@ -13,8 +14,8 @@ from . import config
 DISCLAIMER = "RetailMind AI is a student prototype (CBS International Business School). It is not an official REWE product."
 
 
-class WhatsAppWindowClosed(RuntimeError):
-    """The recipient has not written to the sandbox number within the last 24 hours."""
+class TelegramNotConnected(RuntimeError):
+    """The person has not connected their Telegram chat to the bot yet."""
 
 
 def linkedin_share_url(text: str) -> str:
@@ -85,18 +86,7 @@ def send_email(to: str, subject: str, plain: str, html_body: str = "") -> str:
     return f"Email sent to {to}"
 
 
-def normalise_phone(number: str) -> str:
-    digits = re.sub(r"[^\d+]", "", number or "")
-    if digits.startswith("00"):
-        digits = "+" + digits[2:]
-    elif digits.startswith("0"):
-        digits = "+49" + digits[1:]
-    elif digits and not digits.startswith("+"):
-        digits = "+" + digits
-    return digits
-
-
-def split_message(text: str, limit: int = 1500) -> list:
+def split_message(text: str, limit: int = 3500) -> list:
     parts, current = [], ""
     for para in text.split("\n"):
         while len(para) > limit:
@@ -115,35 +105,66 @@ def split_message(text: str, limit: int = 1500) -> list:
     return [p.strip("\n") for p in parts if p.strip()]
 
 
-def send_whatsapp(to: str, text: str) -> str:
-    sid = config.get("TWILIO_ACCOUNT_SID")
-    token = config.get("TWILIO_AUTH_TOKEN")
-    sender = config.get("TWILIO_WHATSAPP_FROM", "+14155238886")
-    if not sid or not token:
-        raise RuntimeError("WhatsApp is not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN).")
-    number = normalise_phone(to)
-    if len(number) < 8:
-        raise RuntimeError("No valid WhatsApp number in your profile.")
+# ---------------- Telegram ----------------
+def _tg(method: str, **params):
+    token = config.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("Telegram is not configured (TELEGRAM_BOT_TOKEN missing).")
+    r = requests.post(f"https://api.telegram.org/bot{token}/{method}", json=params, timeout=30)
+    try:
+        data = r.json()
+    except ValueError:
+        raise RuntimeError(f"Telegram answered with status {r.status_code}.")
+    if not data.get("ok"):
+        raise RuntimeError(f"Telegram: {data.get('description', 'unknown error')}")
+    return data["result"]
+
+
+_BOT_NAME = {}
+
+
+def bot_username() -> str:
+    token = config.get("TELEGRAM_BOT_TOKEN")
+    if token not in _BOT_NAME:
+        _BOT_NAME[token] = _tg("getMe")["username"]
+    return _BOT_NAME[token]
+
+
+def connect_code(email: str) -> str:
+    return hashlib.sha256(email.strip().lower().encode()).hexdigest()[:12]
+
+
+def connect_link(email: str) -> str:
+    return f"https://t.me/{bot_username()}?start={connect_code(email)}"
+
+
+def find_chat_id(email: str) -> str:
+    """Looks for the /start message this person sent to the bot after clicking their personal link."""
+    code = connect_code(email)
+    updates = _tg("getUpdates", limit=100, allowed_updates=["message"])
+    for update in reversed(updates):
+        message = update.get("message") or {}
+        if (message.get("text") or "").strip() == f"/start {code}":
+            return str(message["chat"]["id"])
+    return ""
+
+
+def _to_html(text: str) -> str:
+    escaped = html.escape(text, quote=False)
+    return re.sub(r"\*(\S[^*\n]*?)\*", r"<b>\1</b>", escaped)
+
+
+def send_telegram(chat_id: str, text: str) -> str:
+    if not chat_id or not str(chat_id).lstrip("-").isdigit():
+        raise TelegramNotConnected("Telegram is not connected yet. Connect it in the sidebar under Your profile.")
     parts = split_message(text)
     for part in parts:
-        r = requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
-            auth=(sid, token),
-            data={"From": f"whatsapp:{normalise_phone(sender)}", "To": f"whatsapp:{number}", "Body": part},
-            timeout=30,
-        )
-        if r.status_code >= 300:
-            try:
-                data = r.json()
-                reason, code = data.get("message", r.text), data.get("code")
-            except Exception:
-                reason, code = r.text, None
-            if "ContentSid" in reason or code in (63016, 21656):
-                masked = number[:6] + " … " + number[-4:]
-                raise WhatsAppWindowClosed(
-                    f"Twilio refused a free text message to {masked} (code {code}: {reason[:80]}). "
-                    "Check that this is exactly the number you wrote to the RetailMind WhatsApp number from. "
-                    f"WhatsApp only allows free text within 24 hours after that number last wrote to {normalise_phone(sender)}."
+        try:
+            _tg("sendMessage", chat_id=chat_id, text=_to_html(part), parse_mode="HTML", disable_web_page_preview=True)
+        except RuntimeError as exc:
+            if "chat not found" in str(exc) or "blocked" in str(exc):
+                raise TelegramNotConnected(
+                    "Telegram could not reach this chat. Open the bot again, press Start and reconnect in the sidebar."
                 )
-            raise RuntimeError(f"Twilio {r.status_code}: {reason[:250]}")
-    return f"WhatsApp accepted by Twilio for {number} ({len(parts)} message{'s' if len(parts) > 1 else ''})"
+            raise
+    return f"Telegram message sent ({len(parts)} part{'s' if len(parts) > 1 else ''})"

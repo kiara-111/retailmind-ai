@@ -35,20 +35,21 @@ def compose(sub: dict) -> dict:
 
 
 def deliver(sub: dict, piece: dict) -> str:
-    if sub["channel"] == "whatsapp":
+    if sub["channel"] in ("telegram", "whatsapp"):  # "whatsapp" only for automations created before the switch
         label = "Based on" if sub["format"] == "linkedin" else "Sources"
         lines = "\n".join(f"{s['short']} {s['url']}".strip() for s in piece["sources"])
-        head = "*RetailMind AI*\n" + ("_Your LinkedIn post draft_\n\n" if sub["format"] == "linkedin" else "\n")
+        head = "*RetailMind AI*\n" + ("Your LinkedIn post draft\n\n" if sub["format"] == "linkedin" else "\n")
         try:
-            return channels.send_whatsapp(sub.get("whatsapp", ""), f"{head}{piece['body']}\n\n*{label}*\n{lines}")
-        except channels.WhatsAppWindowClosed as exc:
+            # the database column is still called "whatsapp"; it now holds the Telegram chat id
+            return channels.send_telegram(sub.get("whatsapp", ""), f"{head}{piece['body']}\n\n*{label}*\n{lines}")
+        except channels.TelegramNotConnected as exc:
             note = (
-                "This was meant for WhatsApp, but WhatsApp only delivers within 24 hours after you last wrote to the "
-                "RetailMind number. Send it a short message to receive the next issue there.\n\n"
+                "This was meant for Telegram, but your Telegram is not connected. "
+                "Connect it in the RetailMind app under Your profile to receive the next issue there.\n\n"
             )
             plain, html_body = channels.build_email(piece["title"], note + piece["body"], piece["sources"], sub["format"])
             channels.send_email(sub["email"], f"RetailMind AI | {piece['title']}", plain, html_body)
-            return f"WhatsApp window closed, delivered by email instead. ({exc})"
+            return f"Telegram not connected, delivered by email instead. ({exc})"
     plain, html_body = channels.build_email(piece["title"], piece["body"], piece["sources"], sub["format"])
     return channels.send_email(sub["email"], f"RetailMind AI | {piece['title']}", plain, html_body)
 

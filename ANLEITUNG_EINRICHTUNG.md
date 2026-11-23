@@ -9,7 +9,7 @@ Du musst nichts installieren. Alles läuft im Browser. Du legst sechs Konten an 
 | Anthropic Console | Sprachmodell | Guthaben aufladen, 5 USD reichen für den Prototyp |
 | Supabase | Speicher für Automatisierungen und Versandprotokoll | kostenlos |
 | Gmail (neues Projektkonto) | Mailversand | kostenlos |
-| Twilio | WhatsApp Testumgebung | Testguthaben kostenlos |
+| Telegram (BotFather) | Sofortkanal per Messenger | kostenlos |
 
 Lege dir eine Notiz an, in der du alle Schlüssel sammelst. Schlüssel gehören nie in eine Datei auf GitHub.
 
@@ -54,29 +54,31 @@ Ab jetzt funktioniert **Ask the research**.
 4. In die Secrets: `SMTP_USER` ist die Gmail Adresse, `SMTP_PASSWORD` das App Passwort. `SMTP_HOST` und `SMTP_PORT` bleiben wie in der Vorlage.
 5. In der App links dein Profil speichern, dann System check, **Send test email**.
 
-## 6. WhatsApp
+## 6. Telegram
 
-1. Auf twilio.com Konto anlegen und die eigene Handynummer bestätigen.
-2. In der Twilio Console **Messaging, Try it out, Send a WhatsApp message**. Dort stehen die Sandbox Nummer und ein Beitrittscode wie `join wort-wort`.
-3. Von deinem Handy den Beitrittscode per WhatsApp an die Sandbox Nummer senden.
-4. Auf der Startseite der Console **Account SID** und **Auth Token** kopieren.
-5. In die Secrets: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM` (die Sandbox Nummer) und `TWILIO_SANDBOX_JOIN_CODE` (damit die App Testern den Code anzeigt).
-6. System check, **Send test WhatsApp**.
+1. Telegram öffnen (App oder web.telegram.org) und nach **@BotFather** suchen. Das ist der offizielle Bot von Telegram, erkennbar am blauen Haken.
+2. `/newbot` schicken. Als Namen `RetailMind AI` eingeben, als Benutzernamen etwas Eindeutiges, das auf `bot` endet, zum Beispiel `retailmind_cbs_bot`.
+3. BotFather antwortet mit einem **Token** (Zahlen, Doppelpunkt, Buchstaben). Das ist der Schlüssel des Bots.
+4. In die Streamlit Secrets `TELEGRAM_BOT_TOKEN` eintragen und speichern.
+5. In der App links das Profil speichern, dann **Open RetailMind in Telegram** klicken, in Telegram **Start** drücken und zurück in der App **Check connection** klicken.
+6. System check, **Send test Telegram**.
+
+Jede Person, die Telegram Briefings bekommen soll, verbindet sich einmal auf diesem Weg.
 
 ## 7. Zeitplaner
 
 Der Zeitplaner läuft bei GitHub und braucht die Schlüssel ein zweites Mal.
 
 1. Im Repository **Settings, Secrets and variables, Actions**.
-2. Unter **Secrets** jeweils mit **New repository secret** anlegen, Namen exakt so: `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`, `SMTP_USER`, `SMTP_PASSWORD`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`.
-3. Unter **Variables** anlegen: `APP_URL` und `TWILIO_WHATSAPP_FROM`. Falls du in Schritt 3 das Modell geändert hast, auch `ANTHROPIC_MODEL`.
+2. Unter **Secrets** jeweils mit **New repository secret** anlegen, Namen exakt so: `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`, `SMTP_USER`, `SMTP_PASSWORD`, `TELEGRAM_BOT_TOKEN`.
+3. Unter **Variables** anlegen: `APP_URL`. Falls du in Schritt 3 das Modell geändert hast, auch `ANTHROPIC_MODEL`.
 4. Oben im Repository auf **Actions**, Workflows erlauben, links **RetailMind scheduler**, **Run workflow**.
 5. Den Lauf anklicken. Im Schritt `python scheduler.py` muss stehen: `Storage: supabase | due automations: 0`.
 
 ## 8. Gesamttest
 
 1. In der App unter Automations die drei Vorlagen aus **Quick start** hinzufügen.
-2. Bei jeder **Send now** drücken. Mail und WhatsApp müssen ankommen, der Eintrag erscheint im Delivery log.
+2. Bei jeder **Send now** drücken. Mail und Telegram müssen ankommen, der Eintrag erscheint im Delivery log.
 3. Für den Test des Zeitplaners eine Automatisierung **Daily** auf die nächste volle Stunde legen und abwarten. Die Zustellung kommt bis etwa 30 Minuten nach der gewählten Zeit.
 
 ## Wissensbasis pflegen
@@ -89,7 +91,7 @@ Die 14 Starteinträge habe ich aus dem Gedächtnis angelegt, damit die App testb
 
 * **Kein eigenes Sprachmodell.** Ein bestehendes Modell antwortet ausschließlich auf Basis eurer geprüften Artikel und nennt die Quelle.
 * **Fester Datensatz.** Die Automatisierungen gehen die Artikel der Reihe nach durch. Nach einem Durchlauf beginnen sie von vorn. Neue Inhalte gibt es nur, wenn ihr Artikel ergänzt.
-* **WhatsApp ist eine Testumgebung.** Jeder Tester muss einmal den Beitrittscode senden. Geplante Nachrichten kommen nur an, wenn die Person in den letzten 24 Stunden an die Nummer geschrieben hat. Schreibt vor der Demo einmal an die Nummer. Die Verknüpfung läuft nach einigen Tagen ab, dann den Code erneut senden.
+* **Telegram statt WhatsApp.** Die WhatsApp Testumgebung von Twilio erlaubt über die Schnittstelle nur feste Vorlagen, keinen freien Text. Im echten Betrieb bräuchte WhatsApp von Meta genehmigte Vorlagen. Telegram liefert ohne diese Einschränkung. Ist Telegram nicht verbunden, kommt der Bericht per Mail.
 * **LinkedIn wird nicht automatisch veröffentlicht.** Der Entwurf kommt zum gewählten Zeitpunkt, veröffentlicht wird mit einem Klick durch die Person selbst.
 * **Zeitplaner mit Verzögerung.** GitHub startet zweimal pro Stunde und manchmal einige Minuten später.
 * **Anmeldung ohne Passwort.** Wer den Zugangscode und eine Mailadresse kennt, sieht die Automatisierungen dieser Adresse. Für einen Prototyp in Ordnung, für den echten Einsatz nicht.

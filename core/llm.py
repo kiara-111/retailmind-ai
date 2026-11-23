@@ -9,7 +9,7 @@ FORMATS = {
     "insights": "Key insights briefing",
     "linkedin": "LinkedIn post draft",
 }
-CHANNELS = {"email": "Email", "whatsapp": "WhatsApp"}
+CHANNELS = {"email": "Email", "telegram": "Telegram"}
 
 GROUNDING = """You are RetailMind AI, a research assistant for senior marketing leaders at REWE Group, a German grocery retailer.
 Your audience is experienced and short on time. Write in clear, precise business English.
@@ -78,8 +78,8 @@ _TASKS = {
         "paragraphs: **What is happening?** **Why does it work?** **What does it mean for REWE? (hypothesis)**. "
         "Cite with article ids in square brackets. Close with a section 'Limitations to keep in mind'."
     ),
-    ("report", "whatsapp"): (
-        "Write a research report for WhatsApp, at most 1100 characters, plain text. Use *single asterisks* for bold, no "
+    ("report", "telegram"): (
+        "Write a research report for a Telegram message, at most 1800 characters, plain text. Use *single asterisks* for bold, no "
         "Markdown headings, no tables. One short block per article covering what is happening, why it works and what it "
         "could mean for REWE (marked as hypothesis). Refer to studies as Author (Year), not with ids."
     ),
@@ -88,8 +88,8 @@ _TASKS = {
         "3 to 4 bullet points, each one finding with its article id in square brackets, then one line "
         "'**For REWE (hypothesis):**' and one line '**Caveat:**'."
     ),
-    ("insights", "whatsapp"): (
-        "Write a key insights briefing for WhatsApp, at most 700 characters, plain text, *single asterisks* for bold. "
+    ("insights", "telegram"): (
+        "Write a key insights briefing for a Telegram message, at most 900 characters, plain text, *single asterisks* for bold. "
         "3 bullet points starting with a dot character, then one line 'For REWE (hypothesis):' and one line 'Caveat:'. "
         "Refer to studies as Author (Year)."
     ),
@@ -120,7 +120,7 @@ def parse_automation(text: str, available_topics: list) -> dict:
         "You turn a request for a recurring delivery into JSON. Output ONLY a JSON object with these keys:\n"
         f'"topics": list, chosen only from {json.dumps(available_topics)} (empty list means all topics),\n'
         '"format": one of "report", "insights", "linkedin",\n'
-        '"channel": one of "email", "whatsapp" (LinkedIn post drafts default to "email"),\n'
+        '"channel": one of "email", "telegram" (requests for Telegram, WhatsApp, messenger, chat or phone mean "telegram"; LinkedIn post drafts default to "email"),\n'
         '"freq_type": one of "daily", "every_n_days", "weekly",\n'
         '"interval_days": integer, only for every_n_days,\n'
         '"weekday": integer 0 to 6 where 0 is Monday, only for weekly,\n'
@@ -139,7 +139,8 @@ def normalise(d: dict, available_topics: list) -> dict:
     if d.get("understood") is False:
         raise ValueError("This does not look like a request for a recurring delivery.")
     fmt = d.get("format") if d.get("format") in FORMATS else "insights"
-    channel = d.get("channel") if d.get("channel") in CHANNELS else "email"
+    channel = "telegram" if d.get("channel") == "whatsapp" else d.get("channel")
+    channel = channel if channel in CHANNELS else "email"
     freq = d.get("freq_type") if d.get("freq_type") in ("daily", "every_n_days", "weekly") else "weekly"
 
     def _int(value, default, low, high):
