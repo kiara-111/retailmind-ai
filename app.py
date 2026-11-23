@@ -79,6 +79,17 @@ def profile_sidebar() -> dict:
     return page
 
 
+@st.cache_data(show_spinner=False)
+def qr_png(text: str) -> bytes:
+    import io
+
+    import qrcode
+
+    buf = io.BytesIO()
+    qrcode.make(text, border=2).save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def telegram_box(p: dict):
     st.markdown("**Telegram**")
     if p.get("telegram"):
@@ -92,8 +103,12 @@ def telegram_box(p: dict):
     except Exception as exc:
         st.caption(f"Telegram bot not reachable: {exc}")
         return
-    st.caption("1. Open the bot and press **Start**.  \n2. Come back and click **Check connection**.")
+    st.caption("1. Scan the code with your phone camera (or use the button) and press **Start** in Telegram.  \n"
+               "2. Come back and click **Check connection**.")
+    st.image(qr_png(link), width=170)
     st.link_button("Open RetailMind in Telegram", link, use_container_width=True)
+    st.caption(f"No QR scanner? In Telegram open @{channels.bot_username()} and send:")
+    st.code(f"/start {channels.connect_code(p['email'])}", language=None)
     if st.button("Check connection", use_container_width=True):
         try:
             chat_id = channels.find_chat_id(p["email"])
