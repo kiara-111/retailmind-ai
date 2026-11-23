@@ -66,8 +66,8 @@ def by_id() -> dict:
 
 
 def ordered() -> list:
-    """Articles in APA 7 reference-list order (alphabetical by first author, then year)."""
-    return sorted(articles(), key=lambda a: (a["authors"].lower(), a["year"]))
+    """Articles in reference-list order. IDs are assigned alphabetically, so ID order equals APA order."""
+    return sorted(articles(), key=lambda a: a["id"])
 
 
 def numbers() -> dict:

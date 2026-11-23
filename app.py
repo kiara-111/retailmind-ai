@@ -350,9 +350,8 @@ def page_kb():
     c2.metric("Topics", len(kb.topics()))
     c3.metric("Peer reviewed journal articles", f"{len(items)}")
     selected = st.multiselect("Topic", kb.topics(), placeholder="All topics")
-    num = kb.numbers()
-    for a in sorted(kb.by_topics(selected), key=lambda x: num[x["id"]]):
-        with st.expander(f"{num[a['id']]}.  {kb.short_cite(a)}  ·  {a['title']}"):
+    for a in sorted(kb.by_topics(selected), key=lambda x: x["id"]):
+        with st.expander(f"{a['id']}  ·  {kb.short_cite(a)}  ·  {a['title']}"):
             pill = "<span class='rm-pill'>read from source</span>" if a["checked"] else "<span class='rm-pill warn'>not yet verified</span>"
             st.markdown(f"<span class='rm-pill'>{a['topic']}</span>{pill}", unsafe_allow_html=True)
             st.markdown(f"**Mechanism:** {a['mechanism']}")
@@ -366,10 +365,10 @@ def page_kb():
     st.divider()
     st.subheader("Bibliography (APA 7)")
     ordered = kb.ordered()
-    for n, a in enumerate(ordered, 1):
-        st.markdown(f"{n}\\. {kb.reference(a, 'md')}")
+    for a in ordered:
+        st.markdown(f"**{a['id']}** {kb.reference(a, 'md')}")
     with st.expander("Copy as plain text (for the pitch deck backup slides)"):
-        st.code("\n\n".join(f"{n}. {kb.reference(a)}" for n, a in enumerate(ordered, 1)), language=None, wrap_lines=True)
+        st.code("\n\n".join(f"{a['id']} {kb.reference(a)}" for a in ordered), language=None, wrap_lines=True)
 
 
 # ------------------------------------------------------------------ page: log
