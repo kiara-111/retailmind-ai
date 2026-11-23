@@ -21,13 +21,17 @@ def backend() -> str:
 # ---------- Supabase ----------
 def _sb(method: str, table: str, params=None, body=None):
     key = config.get("SUPABASE_KEY")
-    url = config.get("SUPABASE_URL").rstrip("/") + f"/rest/v1/{table}"
+    base = config.get("SUPABASE_URL").rstrip("/")
+    if base.endswith("/rest/v1"):
+        base = base[: -len("/rest/v1")]
+    url = base + f"/rest/v1/{table}"
     headers = {
         "apikey": key,
-        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "Prefer": "return=representation",
     }
+    if key.startswith("eyJ"):  # legacy service_role JWT; new sb_secret_ keys only go in the apikey header
+        headers["Authorization"] = f"Bearer {key}"
     r = requests.request(method, url, headers=headers, params=params, json=body, timeout=20)
     if r.status_code >= 300:
         raise RuntimeError(f"Supabase {r.status_code}: {r.text[:300]}")
