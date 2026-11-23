@@ -71,6 +71,17 @@ def run(sub: dict, trigger: str = "schedule") -> dict:
         changes["next_run_at"] = schedule.iso(schedule.next_run(sub))
     if changes and sub.get("id"):
         store.update_subscription(sub["id"], changes)
+    if piece:
+        try:
+            from . import feedback
+            ids = [s["id"] for s in piece["sources"]]
+            store.log_interaction({
+                "email": sub["email"], "kind": "delivery", "question": piece["title"], "answer": piece["body"],
+                "cited_ids": ids, "topics": sub.get("topics") or feedback.topics_of(ids), "format": sub["format"],
+                "channel": sub["channel"], "model": llm.model_name(), **feedback.metrics(piece["body"], ids),
+            })
+        except Exception:
+            pass  # analytics must never block a delivery
     try:
         store.log_delivery({
             "subscription_id": sub.get("id"), "email": sub["email"], "channel": sub["channel"],

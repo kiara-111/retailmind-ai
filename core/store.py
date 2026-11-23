@@ -58,9 +58,11 @@ def _sb(method: str, table: str, params=None, body=None):
 # ---------- local file ----------
 def _read():
     if not os.path.exists(LOCAL_FILE):
-        return {"subscriptions": [], "deliveries": []}
+        return {"subscriptions": [], "deliveries": [], "interactions": []}
     with open(LOCAL_FILE, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    data.setdefault("interactions", [])
+    return data
 
 
 def _write(data):
@@ -165,9 +167,51 @@ def list_deliveries(email: str, limit: int = 30) -> list:
     return sorted(rows, key=lambda d: d["created_at"], reverse=True)[:limit]
 
 
+# ---------- interactions (answers and their evaluation) ----------
+def log_interaction(entry: dict) -> str:
+    entry = dict(entry)
+    entry["email"] = (entry.get("email") or "anonymous").strip().lower()
+    if backend() == "supabase":
+        return _sb("POST", "interactions", body=entry)[0]["id"]
+    data = _read()
+    entry["id"] = str(uuid.uuid4())
+    entry["created_at"] = schedule.iso(schedule.now_utc())
+    data["interactions"].append(entry)
+    _write(data)
+    return entry["id"]
+
+
+def update_interaction(interaction_id: str, changes: dict):
+    if backend() == "supabase":
+        _sb("PATCH", "interactions", {"id": f"eq.{interaction_id}"}, changes)
+        return
+    data = _read()
+    for row in data["interactions"]:
+        if row["id"] == interaction_id:
+            row.update(changes)
+    _write(data)
+
+
+def list_interactions(limit: int = 1000) -> list:
+    if backend() == "supabase":
+        return _sb("GET", "interactions", {"select": "*", "order": "created_at.desc", "limit": str(limit)})
+    rows = sorted(_read()["interactions"], key=lambda r: r["created_at"], reverse=True)
+    return rows[:limit]
+
+
+def all_deliveries(limit: int = 1000) -> list:
+    if backend() == "supabase":
+        return _sb("GET", "deliveries", {"select": "id,created_at,channel,format,trigger,status", "order": "created_at.desc", "limit": str(limit)})
+    return sorted(_read()["deliveries"], key=lambda d: d["created_at"], reverse=True)[:limit]
+
+
 def ping() -> str:
     if backend() == "supabase":
         _sb("GET", "subscriptions", {"select": "id", "limit": "1"})
         _sb("GET", "deliveries", {"select": "id", "limit": "1"})
-        return "Supabase reachable, both tables found."
+        try:
+            _sb("GET", "interactions", {"select": "id", "limit": "1"})
+        except RuntimeError:
+            return "Supabase reachable. The analytics table is missing: run supabase_analytics.sql once in the SQL Editor."
+        return "Supabase reachable, all three tables found."
     return "Local file storage (only for trying things out on one computer)."

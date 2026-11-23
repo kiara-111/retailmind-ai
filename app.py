@@ -3,7 +3,11 @@ import re
 
 import streamlit as st
 
-from core import channels, config, engine, kb, llm, schedule, store
+import time
+
+import pandas as pd
+
+from core import channels, config, engine, feedback, kb, llm, schedule, store
 
 st.set_page_config(page_title="RetailMind AI", page_icon="🧠", layout="wide")
 
@@ -53,7 +57,7 @@ def profile_sidebar() -> dict:
         st.markdown("**Research on demand**")
         page = st.radio(
             "Go to",
-            ["Ask the research", "Automations", "Knowledge base", "Delivery log", "System check"],
+            ["Ask the research", "Automations", "Knowledge base", "Delivery log", "Analytics", "System check"],
             label_visibility="collapsed",
         )
         st.divider()
@@ -106,10 +110,10 @@ def telegram_box(p: dict):
     st.caption("1. Scan the code with your phone camera (or use the button) and press **Start** in Telegram.  \n"
                "2. Come back and click **Check connection**.")
     st.image(qr_png(link), width=170)
-    st.link_button("Open RetailMind in Telegram", link, use_container_width=True)
+    st.link_button("Open RetailMind in Telegram", link, width="stretch")
     st.caption(f"No QR scanner? In Telegram open @{channels.bot_username()} and send:")
     st.code(f"/start {channels.connect_code(p['email'])}", language=None)
-    if st.button("Check connection", use_container_width=True):
+    if st.button("Check connection", width="stretch"):
         try:
             chat_id = channels.find_chat_id(p["email"])
         except Exception as exc:
@@ -163,15 +167,17 @@ def page_chat():
             "How far should we personalise app offers?",
         ]
         for col, ex in zip(cols, examples):
-            if col.button(ex, use_container_width=True):
+            if col.button(ex, width="stretch"):
                 st.session_state.pending_question = ex
                 st.rerun()
-    for m in chat:
+    for n, m in enumerate(chat):
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
             if m.get("sources"):
                 with st.expander(f"References, APA 7 ({len(m['sources'])})"):
                     source_list(m["sources"])
+            if m["role"] == "assistant" and m.get("interaction_id"):
+                rating_widget(m, f"chat_{n}")
     question = st.chat_input("Ask a question about consumer psychology in retail") or st.session_state.pop("pending_question", None)
     if question:
         with st.chat_message("user"):
@@ -180,7 +186,10 @@ def page_chat():
         with st.chat_message("assistant"):
             try:
                 with st.spinner("Reading the knowledge base"):
-                    answer, ids = llm.answer_with_citations(question, pool, chat)
+                    guidance = feedback.guidance_prompt(feedback.learned_guidance())
+                    started = time.time()
+                    answer, ids = llm.answer_with_citations(question, pool, chat, guidance)
+                    latency = int((time.time() - started) * 1000)
             except Exception as exc:
                 st.error(f"The language model could not be reached: {exc}")
                 return
@@ -188,8 +197,18 @@ def page_chat():
             if ids:
                 with st.expander(f"References, APA 7 ({len(ids)})"):
                     source_list(ids)
+        interaction_id = None
+        try:
+            interaction_id = store.log_interaction({
+                "email": st.session_state.profile.get("email"), "kind": "chat", "question": question, "answer": answer,
+                "cited_ids": ids, "topics": selected or feedback.topics_of(ids), "model": llm.model_name(),
+                "latency_ms": latency, **feedback.metrics(answer, ids),
+            })
+        except Exception:
+            pass  # analytics must never block an answer
         chat.append({"role": "user", "content": question})
-        chat.append({"role": "assistant", "content": answer, "sources": ids})
+        chat.append({"role": "assistant", "content": answer, "sources": ids, "interaction_id": interaction_id})
+        st.rerun()
     if chat and st.button("Clear conversation"):
         st.session_state.chat = []
         st.rerun()
@@ -256,7 +275,7 @@ def page_automations():
         for label, spec in PRESETS:
             c1, c2 = st.columns([4, 1])
             c1.markdown(f"**{label}**  \n<span class='rm-note'>{schedule.describe(spec)}</span>", unsafe_allow_html=True)
-            if c2.button("Add", key=f"preset_{label}", use_container_width=True):
+            if c2.button("Add", key=f"preset_{label}", width="stretch"):
                 save_sub(p, {**spec, "topics": topics_q})
 
     with tab_form:
@@ -302,16 +321,16 @@ def page_automations():
                 unsafe_allow_html=True,
             )
             c1, c2, c3, _ = st.columns([1, 1, 1, 3])
-            if c1.button("Send now", key=f"now_{s['id']}", type="primary", use_container_width=True):
+            if c1.button("Send now", key=f"now_{s['id']}", type="primary", width="stretch"):
                 with st.spinner("Writing and sending"):
                     st.session_state[f"result_{s['id']}"] = engine.run(s, trigger="manual")
-            if c2.button("Resume" if not s.get("active") else "Pause", key=f"tog_{s['id']}", use_container_width=True):
+            if c2.button("Resume" if not s.get("active") else "Pause", key=f"tog_{s['id']}", width="stretch"):
                 changes = {"active": not s.get("active")}
                 if changes["active"]:
                     changes["next_run_at"] = schedule.iso(schedule.next_run({**s, "next_run_at": None}))
                 store.update_subscription(s["id"], changes)
                 st.rerun()
-            if c3.button("Delete", key=f"del_{s['id']}", use_container_width=True):
+            if c3.button("Delete", key=f"del_{s['id']}", width="stretch"):
                 store.delete_subscription(s["id"])
                 st.rerun()
             result = st.session_state.get(f"result_{s['id']}")
@@ -339,6 +358,204 @@ def show_piece(sub: dict, piece: dict):
     st.markdown("**References (APA 7)**")
     for s in piece["sources"]:
         st.markdown(s["apa_md"])
+
+
+# ------------------------------------------------------------------ rating
+STARS = {5: "★★★★★", 4: "★★★★☆", 3: "★★★☆☆", 2: "★★☆☆☆", 1: "★☆☆☆☆"}
+
+
+def rating_widget(item: dict, key: str):
+    """item needs 'interaction_id'; stores the rating in the item after submitting."""
+    if item.get("rated"):
+        st.caption(f"Your rating: {STARS[item['rated']]}  ·  thank you, it helps improve RetailMind.")
+        return
+    with st.expander("Rate this answer"):
+        with st.form(f"rate_{key}"):
+            stars = st.radio("Overall", [5, 4, 3, 2, 1], index=None, format_func=STARS.get, horizontal=True)
+            tags = st.multiselect("What stands out?", feedback.TAGS)
+            comment = st.text_input("Comment (optional)")
+            if st.form_submit_button("Submit rating"):
+                if not stars:
+                    st.error("Please choose a star rating.")
+                    return
+                try:
+                    store.update_interaction(item["interaction_id"], {"rating": stars, "tags": tags, "comment": comment.strip()})
+                    item["rated"] = stars
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not save the rating: {exc}")
+
+
+# ------------------------------------------------------------------ page: analytics
+def bar(df: pd.DataFrame, x: str, y: str, horizontal: bool = False):
+    st.bar_chart(df, x=x, y=y, color="#1f6f4a", horizontal=horizontal, height=260)
+
+
+def page_analytics():
+    header("Analytics", "How good are the answers, what do readers want, and what does the system learn from it. "
+                        "Covers chat answers and scheduled briefings of all users.")
+    try:
+        rows = store.list_interactions(1000)
+    except Exception as exc:
+        st.error(f"Analytics data is not available: {exc}")
+        st.info("If the message mentions 'interactions', run supabase_analytics.sql once in the Supabase SQL Editor.")
+        return
+    if not rows:
+        st.info("No answers yet. Ask a question under **Ask the research** or send a briefing, then rate it.")
+        return
+    df = pd.DataFrame(rows)
+    for col in ["rating", "auto_score", "n_citations", "answer_words", "latency_ms"]:
+        df[col] = pd.to_numeric(df.get(col), errors="coerce")
+    df["created"] = pd.to_datetime(df["created_at"], utc=True).dt.tz_convert(schedule.TZ)
+    for col in ["tags", "cited_ids", "topics"]:
+        df[col] = df[col].apply(lambda v: v if isinstance(v, list) else [])
+    df["not_covered"] = df["not_covered"].fillna(False).astype(bool)
+    rated = df[df["rating"].notna()]
+
+    k = st.columns(6)
+    k[0].metric("Chat answers", int((df["kind"] == "chat").sum()))
+    k[1].metric("Briefings sent", int((df["kind"] == "delivery").sum()))
+    k[2].metric("Rated", f"{len(rated) / len(df):.0%}")
+    k[3].metric("Reader rating", f"{rated['rating'].mean():.1f} / 5" if len(rated) else "n/a")
+    k[4].metric("Groundedness (auto)", f"{df['auto_score'].mean():.1f} / 5" if df["auto_score"].notna().any() else "n/a")
+    k[5].metric("Knowledge gaps", int(df["not_covered"].sum() + (rated["rating"] <= 2).sum()))
+
+    tab_q, tab_u, tab_l, tab_e = st.tabs(["Quality", "Usage", "Learning loop", "Automatic check & export"])
+
+    with tab_q:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Reader ratings**")
+            if len(rated):
+                dist = rated["rating"].astype(int).value_counts().reindex([1, 2, 3, 4, 5], fill_value=0)
+                bar(pd.DataFrame({"Stars": [STARS[i] for i in dist.index], "Answers": dist.values}), "Stars", "Answers")
+            else:
+                st.caption("No ratings yet.")
+        with c2:
+            st.markdown("**What readers point out**")
+            tags = pd.Series([t for ts in rated["tags"] for t in ts]).value_counts()
+            if len(tags):
+                bar(pd.DataFrame({"Tag": tags.index, "Mentions": tags.values}), "Tag", "Mentions", horizontal=True)
+            else:
+                st.caption("No tags yet.")
+        st.markdown("**Rating by topic**")
+        topic_rows = [(t, r["rating"]) for _, r in rated.iterrows() for t in (r["topics"] or ["(no topic)"])]
+        if topic_rows:
+            tdf = pd.DataFrame(topic_rows, columns=["Topic", "Rating"]).groupby("Topic")["Rating"].agg(["mean", "count"])
+            tdf = tdf.rename(columns={"mean": "Average rating", "count": "Rated answers"}).sort_values("Average rating")
+            st.dataframe(tdf.style.format({"Average rating": "{:.1f}"}), width="stretch")
+        st.markdown("**Latest comments**")
+        comments = rated[rated["comment"].fillna("") != ""][["created", "kind", "rating", "comment"]].head(10)
+        if len(comments):
+            comments = comments.assign(created=comments["created"].dt.strftime("%d %b, %H:%M"),
+                                       rating=comments["rating"].astype(int).map(STARS))
+            st.dataframe(comments, hide_index=True, width="stretch")
+        else:
+            st.caption("No comments yet.")
+
+    with tab_u:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Answers and briefings per day**")
+            per_day = df.groupby(df["created"].dt.date).size()
+            bar(pd.DataFrame({"Day": per_day.index.astype(str), "Count": per_day.values}), "Day", "Count")
+        with c2:
+            st.markdown("**Most cited articles**")
+            cited = pd.Series([i for ids in df["cited_ids"] for i in ids]).value_counts().head(10)
+            if len(cited):
+                lookup = kb.by_id()
+                labels = [f"{i} {kb.intext(lookup[i])}" if i in lookup else i for i in cited.index]
+                bar(pd.DataFrame({"Article": labels, "Citations": cited.values}), "Article", "Citations", horizontal=True)
+        c3, c4 = st.columns(2)
+        with c3:
+            st.markdown("**Topics asked about**")
+            topics = pd.Series([t for ts in df["topics"] for t in ts]).value_counts()
+            if len(topics):
+                bar(pd.DataFrame({"Topic": topics.index, "Answers": topics.values}), "Topic", "Answers", horizontal=True)
+        with c4:
+            st.markdown("**Briefings by format and channel**")
+            d = df[df["kind"] == "delivery"]
+            if len(d):
+                combo = (d["format"].map(llm.FORMATS).fillna(d["format"]) + " via " + d["channel"].map(llm.CHANNELS).fillna(d["channel"])).value_counts()
+                bar(pd.DataFrame({"Briefing": combo.index, "Sent": combo.values}), "Briefing", "Sent", horizontal=True)
+            else:
+                st.caption("No briefings yet.")
+        chats = df[df["kind"] == "chat"]
+        if len(chats):
+            m = st.columns(3)
+            m[0].metric("Median response time", f"{chats['latency_ms'].median() / 1000:.1f} s" if chats["latency_ms"].notna().any() else "n/a")
+            m[1].metric("Citations per answer", f"{chats['n_citations'].mean():.1f}")
+            m[2].metric("Words per answer", f"{chats['answer_words'].mean():.0f}")
+
+    with tab_l:
+        guidance = feedback.learned_guidance(rows)
+        st.markdown(
+            "The language model is not retrained. RetailMind learns from your ratings in three ways, "
+            "and this tab shows exactly what it uses right now."
+        )
+        st.markdown(f"**1. Style rules from repeated feedback** (from {guidance['n_rated']} rated answers)")
+        if guidance["rules"]:
+            for r in guidance["rules"]:
+                st.markdown(f"- {r}")
+        else:
+            st.caption("A rule appears once readers give the same feedback tag at least twice.")
+        st.markdown("**2. Highly rated answers used as examples**")
+        if guidance["examples"]:
+            for ex in guidance["examples"]:
+                with st.expander(f"{STARS[int(ex['rating'])]}  {ex['question']}"):
+                    st.markdown(ex["answer"])
+        else:
+            st.caption("Answers rated 4 or 5 stars without critical tags become examples for future answers.")
+        st.markdown("**3. Knowledge gaps for the team**")
+        gaps = df[(df["not_covered"]) | (df["rating"] <= 2)]
+        if len(gaps):
+            show = gaps[["created", "kind", "question", "rating", "comment"]].copy()
+            show["created"] = show["created"].dt.strftime("%d %b, %H:%M")
+            show["rating"] = show["rating"].map(lambda v: STARS.get(int(v), "") if pd.notna(v) else "not covered")
+            st.dataframe(show, hide_index=True, width="stretch")
+            st.caption("Add peer reviewed articles on these questions to the knowledge base to close the gaps.")
+        else:
+            st.caption("No gaps found yet.")
+
+    with tab_e:
+        st.markdown(
+            "**Automatic groundedness check.** A second model run compares each answer with the article summaries "
+            "it cites and scores from 1 (unsupported) to 5 (fully supported, hypotheses marked)."
+        )
+        todo = [r for r in rows if r.get("auto_score") in (None, "") and r.get("answer")][:10]
+        if st.button(f"Check the {len(todo)} latest unchecked answers", disabled=not todo, type="primary"):
+            done = 0
+            with st.spinner("Checking answers"):
+                for r in todo:
+                    try:
+                        result = feedback.auto_evaluate(r, llm.ask)
+                        store.update_interaction(r["id"], result)
+                        done += 1
+                    except Exception as exc:
+                        st.warning(f"One answer could not be checked: {exc}")
+            st.success(f"{done} answers checked.")
+            st.rerun()
+        scored = df[df["auto_score"].notna()]
+        if len(scored):
+            dist = scored["auto_score"].astype(int).value_counts().reindex([1, 2, 3, 4, 5], fill_value=0)
+            bar(pd.DataFrame({"Score": [str(i) for i in dist.index], "Answers": dist.values}), "Score", "Answers")
+            low = scored[scored["auto_score"] <= 3][["question", "auto_score", "auto_reason"]].head(10)
+            if len(low):
+                st.markdown("**Answers with weak grounding**")
+                st.dataframe(low, hide_index=True, width="stretch")
+        st.divider()
+        st.markdown(
+            "**Export.** Rated answers in the chat-message JSONL format that evaluation tools and fine-tuning "
+            "services expect, plus all data as CSV."
+        )
+        c1, c2 = st.columns(2)
+        jsonl = feedback.export_jsonl(rows)
+        c1.download_button("Download rated answers (JSONL)", jsonl or "", file_name="retailmind_rated_answers.jsonl",
+                           mime="application/jsonl", disabled=not jsonl, width="stretch")
+        csv = df.drop(columns=["created", "email"], errors="ignore").to_csv(index=False)
+        c2.download_button("Download all interactions (CSV)", csv, file_name="retailmind_interactions.csv",
+                           mime="text/csv", width="stretch")
+        st.caption("Email addresses are left out of both exports.")
 
 
 # ------------------------------------------------------------------ page: knowledge base
@@ -392,6 +609,28 @@ def page_log():
             st.caption(d.get("detail", ""))
             if d.get("content"):
                 st.markdown(d["content"])
+                if ok:
+                    rate_delivery(d)
+
+
+def rate_delivery(d: dict):
+    """Briefings are logged as interactions when sent; find that record and rate it."""
+    key = f"delivery_rating_{d['id']}"
+    item = st.session_state.setdefault(key, {})
+    if "interaction_id" not in item:
+        match = None
+        try:
+            for r in store.list_interactions(300):
+                if r.get("kind") == "delivery" and r.get("answer") == d.get("content"):
+                    match = r
+                    break
+        except Exception:
+            pass
+        item["interaction_id"] = match["id"] if match else None
+        if match and match.get("rating"):
+            item["rated"] = int(match["rating"])
+    if item.get("interaction_id"):
+        rating_widget(item, key)
 
 
 # ------------------------------------------------------------------ page: system check
@@ -418,22 +657,22 @@ def page_check():
     st.divider()
     st.subheader("Live tests")
     c1, c2, c3, c4 = st.columns(4)
-    if c1.button("Test language model", use_container_width=True):
+    if c1.button("Test language model", width="stretch"):
         try:
             st.success("Model answered: " + llm.ask("Reply with the single word READY.", [{"role": "user", "content": "Status?"}], 300))
         except Exception as exc:
             st.error(str(exc))
-    if c2.button("Test storage", use_container_width=True):
+    if c2.button("Test storage", width="stretch"):
         try:
             st.success(store.ping())
         except Exception as exc:
             st.error(str(exc))
-    if c3.button("Send test email", use_container_width=True, disabled=not p["email"]):
+    if c3.button("Send test email", width="stretch", disabled=not p["email"]):
         try:
             st.success(channels.send_email(p["email"], "RetailMind AI | Test", "Email delivery works."))
         except Exception as exc:
             st.error(str(exc))
-    if c4.button("Send test Telegram", use_container_width=True, disabled=not p.get("telegram")):
+    if c4.button("Send test Telegram", width="stretch", disabled=not p.get("telegram")):
         try:
             st.success(channels.send_telegram(p["telegram"], "*RetailMind AI*\nTelegram delivery works."))
         except Exception as exc:
@@ -459,5 +698,6 @@ page = profile_sidebar()
     "Automations": page_automations,
     "Knowledge base": page_kb,
     "Delivery log": page_log,
+    "Analytics": page_analytics,
     "System check": page_check,
 }[page]()

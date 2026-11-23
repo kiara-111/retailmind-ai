@@ -46,6 +46,10 @@ def ask(system: str, messages: list, max_tokens: int = 1200) -> str:
     return text
 
 
+def model_name() -> str:
+    return config.get("ANTHROPIC_MODEL", config.DEFAULT_MODEL)
+
+
 def clean(text: str) -> str:
     return text.replace(" — ", ", ").replace("—", ", ").replace(" – ", ", ").strip()
 
@@ -57,9 +61,11 @@ def cited_ids(text: str, allowed) -> list:
 
 
 # ---------- chat ----------
-def answer_question(question: str, articles: list, history: list) -> str:
+def answer_question(question: str, articles: list, history: list, guidance: str = "") -> str:
     system = (
         f"{GROUNDING}\n\n"
+        + (f"{guidance}\n\n" if guidance else "")
+        +
         "Answer the question. Cite every claim with the article id in square brackets, for example [R03]. "
         "If the knowledge base cannot answer the question, say that it is not covered and name the closest "
         "topic that is covered. Keep it under 220 words unless asked for more. "
@@ -71,9 +77,9 @@ def answer_question(question: str, articles: list, history: list) -> str:
     return clean(ask(system, messages, max_tokens=900))
 
 
-def answer_with_citations(question: str, articles: list, history: list) -> tuple:
+def answer_with_citations(question: str, articles: list, history: list, guidance: str = "") -> tuple:
     """Returns (answer with APA 7 in-text citations, cited article ids)."""
-    raw = answer_question(question, articles, history)
+    raw = answer_question(question, articles, history, guidance)
     return kb.apply_citations(raw, [a["id"] for a in articles])
 
 

@@ -81,6 +81,15 @@ Der Zeitplaner läuft bei GitHub und braucht die Schlüssel ein zweites Mal.
 2. Bei jeder **Send now** drücken. Mail und Telegram müssen ankommen, der Eintrag erscheint im Delivery log.
 3. Für den Test des Zeitplaners eine Automatisierung **Daily** auf die nächste volle Stunde legen und abwarten. Die Zustellung kommt bis etwa 30 Minuten nach der gewählten Zeit.
 
+
+## Analytics freischalten (einmalig)
+
+1. In Supabase links **SQL Editor**, dann **New query**.
+2. Den Inhalt von `supabase_analytics.sql` einfügen und **Run** klicken.
+3. In der App unter System check **Test storage** klicken. Erwartet: "Supabase reachable, all three tables found."
+
+Ab dann wird jede Antwort und jeder Bericht gespeichert und kann bewertet werden. Die Seite **Analytics** zeigt Bewertungen, Nutzung, Wissenslücken, die automatische Prüfung und den Export.
+
 ## Wissensbasis pflegen
 
 Die Datei `knowledge_base.xlsx` ist euer Datenfundament. Auf dem Blatt "How to fill in" stehen die Regeln. Nach dem Bearbeiten die Datei im Repository über **Add file, Upload files** ersetzen. Die App lädt sich danach selbst neu.
@@ -95,4 +104,5 @@ Die 14 Starteinträge habe ich aus dem Gedächtnis angelegt, damit die App testb
 * **LinkedIn wird nicht automatisch veröffentlicht.** Der Entwurf kommt zum gewählten Zeitpunkt, veröffentlicht wird mit einem Klick durch die Person selbst.
 * **Zeitplaner mit Verzögerung.** GitHub startet zweimal pro Stunde und manchmal einige Minuten später.
 * **Anmeldung ohne Passwort.** Wer den Zugangscode und eine Mailadresse kennt, sieht die Automatisierungen dieser Adresse. Für einen Prototyp in Ordnung, für den echten Einsatz nicht.
+* **Kein Nachtraining des Modells.** RetailMind lernt aus Bewertungen über Beispiele und Stilregeln im Prompt. Der Export liefert die Daten, mit denen man ein Modell später feintunen oder systematisch testen könnte.
 * Die kostenlose App schläft nach längerer Inaktivität ein. Vor der Demo einmal öffnen.

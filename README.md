@@ -11,6 +11,7 @@ Student prototype, CBS International Business School. Not an official REWE produ
 | Grounded generation | `core/llm.py`, `core/engine.py` | Anthropic API |
 | Channels: email, Telegram, LinkedIn draft | `core/channels.py` | SMTP, Telegram Bot API |
 | Storage | `core/store.py`, `supabase_setup.sql` | Supabase |
+| Analytics and feedback loop | `core/feedback.py`, `supabase_analytics.sql` | Supabase, Anthropic API |
 | Scheduler | `scheduler.py`, `.github/workflows/scheduler.yml` | GitHub Actions |
 
 Setup: see `ANLEITUNG_EINRICHTUNG.md` (German).
