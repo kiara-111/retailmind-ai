@@ -145,8 +145,8 @@ def source_list(ids):
     lookup = {a["id"]: a for a in kb.articles()}
     for i in ids:
         a = lookup[i]
-        flag = "" if a["checked"] else "  ·  not yet verified by the team"
-        st.markdown(f"**[{i}]** {kb.reference(a)}{flag}")
+        flag = "" if a["checked"] else "  ·  not yet verified"
+        st.markdown(f"{kb.reference(a, 'md')}{flag}")
 
 
 # ------------------------------------------------------------------ page: chat
@@ -170,7 +170,7 @@ def page_chat():
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
             if m.get("sources"):
-                with st.expander(f"Sources ({len(m['sources'])})"):
+                with st.expander(f"References, APA 7 ({len(m['sources'])})"):
                     source_list(m["sources"])
     question = st.chat_input("Ask a question about consumer psychology in retail") or st.session_state.pop("pending_question", None)
     if question:
@@ -180,14 +180,13 @@ def page_chat():
         with st.chat_message("assistant"):
             try:
                 with st.spinner("Reading the knowledge base"):
-                    answer = llm.answer_question(question, pool, chat)
+                    answer, ids = llm.answer_with_citations(question, pool, chat)
             except Exception as exc:
                 st.error(f"The language model could not be reached: {exc}")
                 return
-            ids = llm.cited_ids(answer, [a["id"] for a in pool])
             st.markdown(answer)
             if ids:
-                with st.expander(f"Sources ({len(ids)})"):
+                with st.expander(f"References, APA 7 ({len(ids)})"):
                     source_list(ids)
         chat.append({"role": "user", "content": question})
         chat.append({"role": "assistant", "content": answer, "sources": ids})
@@ -337,9 +336,9 @@ def show_piece(sub: dict, piece: dict):
         st.link_button("Open in LinkedIn", channels.linkedin_share_url(piece["body"]))
     else:
         st.markdown(piece["body"])
-    st.markdown("**Sources**")
+    st.markdown("**References (APA 7)**")
     for s in piece["sources"]:
-        st.markdown(f"{s['ref']} {s['url']}")
+        st.markdown(s["apa_md"])
 
 
 # ------------------------------------------------------------------ page: knowledge base
@@ -349,21 +348,27 @@ def page_kb():
     c1, c2, c3 = st.columns(3)
     c1.metric("Articles", len(items))
     c2.metric("Topics", len(kb.topics()))
-    c3.metric("Verified by the team", f"{sum(a['checked'] for a in items)} of {len(items)}")
+    c3.metric("Peer reviewed journal articles", f"{len(items)}")
     selected = st.multiselect("Topic", kb.topics(), placeholder="All topics")
     for a in kb.by_topics(selected):
-        with st.expander(f"{a['id']}  ·  {kb.short_cite(a)}  ·  {a['title']}"):
-            pill = "<span class='rm-pill'>verified</span>" if a["checked"] else "<span class='rm-pill warn'>not yet verified</span>"
+        with st.expander(f"{kb.short_cite(a)}  ·  {a['title']}"):
+            pill = "<span class='rm-pill'>read from source</span>" if a["checked"] else "<span class='rm-pill warn'>not yet verified</span>"
             st.markdown(f"<span class='rm-pill'>{a['topic']}</span>{pill}", unsafe_allow_html=True)
             st.markdown(f"**Mechanism:** {a['mechanism']}")
             st.markdown(f"**Key findings:** {a['findings']}")
             st.markdown(f"**Method and sample:** {a['method']}")
             st.markdown(f"**Limitations:** {a['limitations']}")
             st.markdown(f"**Relevance for REWE (hypothesis):** {a['relevance']}")
-            st.markdown(f"**Reference:** {kb.reference(a)}")
+            st.markdown(f"**Reference (APA 7):** {kb.reference(a, 'md')}")
+            if a.get("url"):
+                st.caption(f"Accessed via: {a['url']}")
     st.divider()
-    st.subheader("Bibliography")
-    st.code("\n\n".join(kb.reference(a) for a in sorted(items, key=lambda x: x["authors"])), language=None, wrap_lines=True)
+    st.subheader("Bibliography (APA 7)")
+    ordered = sorted(items, key=lambda x: (x["authors"].lower(), x["year"]))
+    for a in ordered:
+        st.markdown(kb.reference(a, "md"))
+    with st.expander("Copy as plain text (for the pitch deck backup slides)"):
+        st.code("\n\n".join(kb.reference(a) for a in ordered), language=None, wrap_lines=True)
 
 
 # ------------------------------------------------------------------ page: log

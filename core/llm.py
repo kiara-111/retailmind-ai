@@ -19,7 +19,8 @@ Strict rules:
 2. Never invent sources, effect sizes, sample sizes or revenue effects. If the knowledge base does not cover something, say so plainly.
 3. Keep evidence and interpretation apart. What a study found is evidence. What it could mean for REWE is always a hypothesis and must be worded as one.
 4. Mention relevant limitations instead of hiding them.
-5. Do not use em dashes."""
+5. Do not use em dashes.
+6. Refer to studies only through their article id in square brackets, e.g. [R03]. Never write author names or years yourself; they are inserted automatically in APA 7 format."""
 
 
 def _client():
@@ -70,6 +71,12 @@ def answer_question(question: str, articles: list, history: list) -> str:
     return clean(ask(system, messages, max_tokens=900))
 
 
+def answer_with_citations(question: str, articles: list, history: list) -> tuple:
+    """Returns (answer with APA 7 in-text citations, cited article ids)."""
+    raw = answer_question(question, articles, history)
+    return kb.apply_citations(raw, [a["id"] for a in articles])
+
+
 # ---------- scheduled content ----------
 _TASKS = {
     ("report", "email"): (
@@ -81,7 +88,7 @@ _TASKS = {
     ("report", "telegram"): (
         "Write a research report for a Telegram message, at most 1800 characters, plain text. Use *single asterisks* for bold, no "
         "Markdown headings, no tables. One short block per article covering what is happening, why it works and what it "
-        "could mean for REWE (marked as hypothesis). Refer to studies as Author (Year), not with ids."
+        "could mean for REWE (marked as hypothesis). Cite every study with its article id in square brackets, for example [R03]."
     ),
     ("insights", "email"): (
         "Write a key insights briefing in Markdown, 150 to 200 words: a one line headline as a level 2 heading, then "
@@ -91,12 +98,12 @@ _TASKS = {
     ("insights", "telegram"): (
         "Write a key insights briefing for a Telegram message, at most 900 characters, plain text, *single asterisks* for bold. "
         "3 bullet points starting with a dot character, then one line 'For REWE (hypothesis):' and one line 'Caveat:'. "
-        "Refer to studies as Author (Year)."
+        "Cite every finding with its article id in square brackets, for example [R03]."
     ),
     ("linkedin", "any"): (
         "Write a LinkedIn post a senior marketing leader could publish under their own name, 120 to 170 words, first "
-        "person, plain text without Markdown and without ids. Open with a concrete observation, explain the finding "
-        "and the mechanism, refer to the study as Author (Year), share one considered takeaway for grocery retail "
+        "person, plain text without Markdown. Open with a concrete observation, explain the finding "
+        "and the mechanism, cite the study once with its article id in square brackets, e.g. [R03], share one considered takeaway for grocery retail "
         "worded as a personal view, and end with a genuine question to the network. No hashtags inside the text, "
         "add 3 fitting hashtags on the last line. No emojis. Do not present REWE internal plans."
     ),
@@ -111,7 +118,8 @@ def generate(fmt: str, channel: str, topics: list, focus: list, user_name: str =
         f"Selected topics: {', '.join(topics) if topics else 'all topics'}.\n\n"
         f"{task}\n\nDo not add a list of sources at the end, it is attached automatically. Output only the text itself."
     )
-    return clean(ask(system, [{"role": "user", "content": user}], max_tokens=1400))
+    text = clean(ask(system, [{"role": "user", "content": user}], max_tokens=1400))
+    return kb.apply_citations(text, [a["id"] for a in focus])[0]
 
 
 # ---------- natural language automation setup ----------

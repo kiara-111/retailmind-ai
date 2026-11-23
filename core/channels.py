@@ -37,12 +37,10 @@ def _wrap(title: str, inner_html: str, manage_url: str = "") -> str:
 def build_email(title: str, body: str, sources: list, fmt: str) -> tuple:
     """Returns (plain_text, html)."""
     src_html = "".join(
-        f'<li style="margin-bottom:6px">{html.escape(s["ref"])}'
-        + (f' <a href="{s["url"]}">{html.escape(s["url"])}</a>' if s["url"] else "")
-        + "</li>"
+        f'<li style="margin-bottom:8px">{s["apa_html"]}</li>'
         for s in sources
     )
-    src_text = "\n".join(f"- {s['ref']} {s['url']}".strip() for s in sources)
+    src_text = "\n\n".join(s["apa"] for s in sources)
     manage_url = config.get("APP_URL")
     if fmt == "linkedin":
         post_html = html.escape(body).replace("\n", "<br>")
@@ -51,12 +49,12 @@ def build_email(title: str, body: str, sources: list, fmt: str) -> tuple:
             f'<div style="border-left:4px solid #d9b36c;background:#faf7f1;padding:14px 18px;margin:14px 0">{post_html}</div>'
             f'<p><a href="{linkedin_share_url(body)}" style="background:#0a66c2;color:#fff;padding:10px 18px;'
             'border-radius:20px;text-decoration:none;font-weight:bold">Open in LinkedIn</a></p>'
-            f'<h4 style="margin-bottom:6px">Based on</h4><ul style="padding-left:18px;font-size:13px">{src_html}</ul>'
+            f'<h4 style="margin-bottom:6px">Based on (APA 7)</h4><ul style="padding-left:18px;font-size:13px;list-style:none">{src_html}</ul>'
         )
         plain = f"{body}\n\nBased on:\n{src_text}\n\n{DISCLAIMER}"
     else:
-        inner = md.markdown(body) + f'<h4 style="margin-bottom:6px">Sources</h4><ul style="padding-left:18px;font-size:13px">{src_html}</ul>'
-        plain = f"{body}\n\nSources:\n{src_text}\n\n{DISCLAIMER}"
+        inner = md.markdown(body) + f'<h4 style="margin-bottom:6px">References (APA 7)</h4><ul style="padding-left:18px;font-size:13px;list-style:none">{src_html}</ul>'
+        plain = f"{body}\n\nReferences (APA 7):\n{src_text}\n\n{DISCLAIMER}"
     return plain, _wrap(title, inner, manage_url)
 
 

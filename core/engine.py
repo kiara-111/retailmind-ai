@@ -29,15 +29,15 @@ def title_for(sub: dict) -> str:
 def compose(sub: dict) -> dict:
     focus, covered = pick_focus(sub)
     body = llm.generate(sub["format"], sub["channel"], sub.get("topics") or [], focus, sub.get("user_name", ""))
-    sources = [{"id": a["id"], "ref": kb.reference(a).replace(kb.doi_url(a), "").strip(), "url": kb.doi_url(a),
-                "short": f"{kb.short_cite(a)}, {a['journal']}"} for a in focus]
+    sources = [{"id": a["id"], "apa": kb.reference(a), "apa_html": kb.reference(a, "html"),
+                "apa_md": kb.reference(a, "md")} for a in focus]
     return {"body": body, "sources": sources, "covered": covered, "title": title_for(sub)}
 
 
 def deliver(sub: dict, piece: dict) -> str:
     if sub["channel"] in ("telegram", "whatsapp"):  # "whatsapp" only for automations created before the switch
-        label = "Based on" if sub["format"] == "linkedin" else "Sources"
-        lines = "\n".join(f"{s['short']} {s['url']}".strip() for s in piece["sources"])
+        label = "Based on (APA 7)" if sub["format"] == "linkedin" else "References (APA 7)"
+        lines = "\n\n".join(s["apa"] for s in piece["sources"])
         head = "*RetailMind AI*\n" + ("Your LinkedIn post draft\n\n" if sub["format"] == "linkedin" else "\n")
         try:
             # the database column is still called "whatsapp"; it now holds the Telegram chat id
