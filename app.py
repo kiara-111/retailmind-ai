@@ -362,7 +362,7 @@ def page_check():
     c1, c2, c3, c4 = st.columns(4)
     if c1.button("Test language model", use_container_width=True):
         try:
-            st.success("Model answered: " + llm.ask("Reply with the single word READY.", [{"role": "user", "content": "Status?"}], 20))
+            st.success("Model answered: " + llm.ask("Reply with the single word READY.", [{"role": "user", "content": "Status?"}], 300))
         except Exception as exc:
             st.error(str(exc))
     if c2.button("Test storage", use_container_width=True):

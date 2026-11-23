@@ -38,7 +38,11 @@ def ask(system: str, messages: list, max_tokens: int = 1200) -> str:
         system=system,
         messages=messages,
     )
-    return "".join(block.text for block in response.content if getattr(block, "type", "") == "text").strip()
+    text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text").strip()
+    if not text:
+        kinds = ", ".join(getattr(b, "type", "?") for b in response.content) or "none"
+        raise RuntimeError(f"The model returned no text (stop reason: {response.stop_reason}, content: {kinds}).")
+    return text
 
 
 def clean(text: str) -> str:
@@ -124,7 +128,7 @@ def parse_automation(text: str, available_topics: list) -> dict:
         '"understood": false if the request is not about a recurring delivery, otherwise true.\n'
         "The request may be in English or German."
     )
-    raw = ask(system, [{"role": "user", "content": text}], max_tokens=300)
+    raw = ask(system, [{"role": "user", "content": text}], max_tokens=800)
     match = re.search(r"\{.*\}", raw, re.S)
     if not match:
         raise ValueError("The request could not be interpreted.")
