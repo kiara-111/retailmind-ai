@@ -13,6 +13,10 @@ from . import config
 DISCLAIMER = "RetailMind AI is a student prototype (CBS International Business School). It is not an official REWE product."
 
 
+class WhatsAppWindowClosed(RuntimeError):
+    """The recipient has not written to the sandbox number within the last 24 hours."""
+
+
 def linkedin_share_url(text: str) -> str:
     return "https://www.linkedin.com/feed/?shareActive=true&text=" + quote(text)
 
@@ -130,8 +134,14 @@ def send_whatsapp(to: str, text: str) -> str:
         )
         if r.status_code >= 300:
             try:
-                reason = r.json().get("message", r.text)
+                data = r.json()
+                reason, code = data.get("message", r.text), data.get("code")
             except Exception:
-                reason = r.text
+                reason, code = r.text, None
+            if "ContentSid" in reason or code in (63016, 21656):
+                raise WhatsAppWindowClosed(
+                    "WhatsApp only allows messages within 24 hours after you last wrote to the RetailMind number. "
+                    f"Send any WhatsApp message (for example 'Hi') to {normalise_phone(sender)} and try again."
+                )
             raise RuntimeError(f"Twilio {r.status_code}: {reason[:250]}")
     return f"WhatsApp accepted by Twilio for {number} ({len(parts)} message{'s' if len(parts) > 1 else ''})"

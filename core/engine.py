@@ -39,7 +39,16 @@ def deliver(sub: dict, piece: dict) -> str:
         label = "Based on" if sub["format"] == "linkedin" else "Sources"
         lines = "\n".join(f"{s['short']} {s['url']}".strip() for s in piece["sources"])
         head = "*RetailMind AI*\n" + ("_Your LinkedIn post draft_\n\n" if sub["format"] == "linkedin" else "\n")
-        return channels.send_whatsapp(sub.get("whatsapp", ""), f"{head}{piece['body']}\n\n*{label}*\n{lines}")
+        try:
+            return channels.send_whatsapp(sub.get("whatsapp", ""), f"{head}{piece['body']}\n\n*{label}*\n{lines}")
+        except channels.WhatsAppWindowClosed as exc:
+            note = (
+                "This was meant for WhatsApp, but WhatsApp only delivers within 24 hours after you last wrote to the "
+                "RetailMind number. Send it a short message to receive the next issue there.\n\n"
+            )
+            plain, html_body = channels.build_email(piece["title"], note + piece["body"], piece["sources"], sub["format"])
+            channels.send_email(sub["email"], f"RetailMind AI | {piece['title']}", plain, html_body)
+            return f"WhatsApp window closed, delivered by email instead. ({exc})"
     plain, html_body = channels.build_email(piece["title"], piece["body"], piece["sources"], sub["format"])
     return channels.send_email(sub["email"], f"RetailMind AI | {piece['title']}", plain, html_body)
 
