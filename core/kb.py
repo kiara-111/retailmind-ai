@@ -65,6 +65,16 @@ def by_id() -> dict:
     return {a["id"]: a for a in articles()}
 
 
+def ordered() -> list:
+    """Articles in APA 7 reference-list order (alphabetical by first author, then year)."""
+    return sorted(articles(), key=lambda a: (a["authors"].lower(), a["year"]))
+
+
+def numbers() -> dict:
+    """Running number of each article in the alphabetical reference list (1, 2, 3 ...)."""
+    return {a["id"]: n for n, a in enumerate(ordered(), 1)}
+
+
 def topics() -> list:
     seen = []
     for a in articles():
