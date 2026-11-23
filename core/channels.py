@@ -139,9 +139,11 @@ def send_whatsapp(to: str, text: str) -> str:
             except Exception:
                 reason, code = r.text, None
             if "ContentSid" in reason or code in (63016, 21656):
+                masked = number[:6] + " … " + number[-4:]
                 raise WhatsAppWindowClosed(
-                    "WhatsApp only allows messages within 24 hours after you last wrote to the RetailMind number. "
-                    f"Send any WhatsApp message (for example 'Hi') to {normalise_phone(sender)} and try again."
+                    f"Twilio refused a free text message to {masked} (code {code}: {reason[:80]}). "
+                    "Check that this is exactly the number you wrote to the RetailMind WhatsApp number from. "
+                    f"WhatsApp only allows free text within 24 hours after that number last wrote to {normalise_phone(sender)}."
                 )
             raise RuntimeError(f"Twilio {r.status_code}: {reason[:250]}")
     return f"WhatsApp accepted by Twilio for {number} ({len(parts)} message{'s' if len(parts) > 1 else ''})"
