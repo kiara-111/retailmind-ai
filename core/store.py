@@ -5,6 +5,7 @@ otherwise a local JSON file so the app can be tried on a laptop.
 """
 import json
 import os
+import re
 import uuid
 
 import requests
@@ -32,10 +33,24 @@ def _sb(method: str, table: str, params=None, body=None):
     }
     if key.startswith("eyJ"):  # legacy service_role JWT; new sb_secret_ keys only go in the apikey header
         headers["Authorization"] = f"Bearer {key}"
+    host = re.sub(r"^https?://", "", base).split("/")[0]
+    if not re.fullmatch(r"[a-z0-9]{15,30}\.supabase\.co", host):
+        raise RuntimeError(
+            f"SUPABASE_URL looks wrong ('{host}'). It must have exactly this form: "
+            "https://<project-id>.supabase.co  (the project id is the code after /project/ in your Supabase dashboard address)."
+        )
     r = requests.request(method, url, headers=headers, params=params, json=body, timeout=20)
     if r.status_code >= 300:
         raise RuntimeError(f"Supabase {r.status_code}: {r.text[:300]}")
-    return r.json() if r.text else []
+    if not r.text:
+        return []
+    try:
+        return r.json()
+    except ValueError:
+        raise RuntimeError(
+            f"Supabase answered with a web page instead of data (status {r.status_code}, "
+            f"{r.headers.get('content-type', 'unknown type')}). Check SUPABASE_URL: it must be https://<project-id>.supabase.co"
+        )
 
 
 # ---------- local file ----------
