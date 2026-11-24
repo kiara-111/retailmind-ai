@@ -1,11 +1,10 @@
 """RetailMind AI: research on demand for marketing leaders. Student prototype (CBS)."""
+import html
 import re
-
-import streamlit as st
-
 import time
 
 import pandas as pd
+import streamlit as st
 
 from core import channels, config, engine, feedback, kb, llm, schedule, store
 
@@ -13,12 +12,13 @@ st.set_page_config(page_title="RetailMind AI", page_icon="🧠", layout="wide")
 
 st.markdown(
     """<style>
-    .block-container {padding-top: 2.2rem; max-width: 1100px;}
-    .rm-kicker {letter-spacing: .18em; text-transform: uppercase; font-size: .72rem; color: #a07a2c; font-weight: 700;}
-    .rm-note {color: #6b6f6c; font-size: .85rem;}
-    .rm-pill {display:inline-block; padding:2px 10px; border-radius:12px; font-size:.75rem; margin-right:6px;
-              background:#e4efe8; color:#1f6f4a;}
-    .rm-pill.warn {background:#fbeed3; color:#8a5a00;}
+    .block-container {padding-top: 2rem; max-width: 1100px;}
+    /* Secondary text inherits the theme colour; 72% keeps 6.2:1 (light) and 8.0:1 (dark). */
+    .rm-note {opacity: .72; font-size: .9rem;}
+    /* Signature: implications for REWE are hypotheses, set apart from the evidence by a dashed frame. */
+    .rm-hypothesis {border: 1.5px dashed rgba(190, 135, 20, .85); background: rgba(214, 160, 40, .10);
+                    border-radius: .6rem; padding: .65rem .9rem; margin: .4rem 0 .2rem;}
+    .rm-hypothesis b {letter-spacing: .01em;}
     </style>""",
     unsafe_allow_html=True,
 )
@@ -36,32 +36,24 @@ def gate():
     code = config.get("APP_ACCESS_CODE")
     if not code or st.session_state.get("authed"):
         return
-    st.markdown('<div class="rm-kicker">RetailMind AI</div>', unsafe_allow_html=True)
-    st.title("Research on demand for marketing leaders")
-    st.write("Enter the access code you received with the pitch deck.")
+    st.title("RetailMind AI")
+    st.markdown("Research on demand for marketing leaders.")
+    st.write("Enter the access code from the pitch deck to continue.")
     with st.form("gate_form"):
         entered = st.text_input("Access code", type="password")
         if st.form_submit_button("Enter", type="primary"):
             if entered.strip() == code:
                 st.session_state.authed = True
                 st.rerun()
-            st.error("That code is not correct.")
+            st.error("This access code doesn't match. Check the code on the pitch deck and try again.")
     st.caption(DISCLAIMER)
     st.stop()
 
 
-def profile_sidebar() -> dict:
+def profile_sidebar():
     p = st.session_state.setdefault("profile", {"name": "", "email": "", "telegram": ""})
     with st.sidebar:
-        st.markdown('<div class="rm-kicker">RetailMind AI</div>', unsafe_allow_html=True)
-        st.markdown("**Research on demand**")
-        page = st.radio(
-            "Go to",
-            ["Ask the research", "Automations", "Knowledge base", "Delivery log", "Analytics", "System check"],
-            label_visibility="collapsed",
-        )
-        st.divider()
-        st.markdown("**Your profile**")
+        st.markdown("**Profile**")
         with st.form("profile_form"):
             name = st.text_input("Name", p["name"])
             email = st.text_input("Email", p["email"], help="Your automations are stored under this address.")
@@ -79,8 +71,7 @@ def profile_sidebar() -> dict:
             st.caption(f"Signed in as {p['email']}")
             telegram_box(p)
         st.divider()
-        st.caption(DISCLAIMER)
-    return page
+        st.caption(f"**RetailMind AI**  \n{DISCLAIMER}")
 
 
 @st.cache_data(show_spinner=False)
@@ -97,7 +88,7 @@ def qr_png(text: str) -> bytes:
 def telegram_box(p: dict):
     st.markdown("**Telegram**")
     if p.get("telegram"):
-        st.markdown("<span class='rm-pill'>connected</span>", unsafe_allow_html=True)
+        st.markdown(":green-badge[:material/check: Connected]")
         return
     if not config.has("TELEGRAM_BOT_TOKEN"):
         st.caption("Telegram is not set up yet (see System check).")
@@ -140,7 +131,6 @@ def need_profile() -> dict:
 
 
 def header(title: str, lead: str):
-    st.markdown('<div class="rm-kicker">RetailMind AI</div>', unsafe_allow_html=True)
     st.title(title)
     st.markdown(f'<p class="rm-note">{lead}</p>', unsafe_allow_html=True)
 
@@ -151,6 +141,25 @@ def source_list(ids):
         a = lookup[i]
         flag = "" if a["checked"] else "  ·  not yet verified"
         st.markdown(f"{kb.reference(a, 'md')}{flag}")
+
+
+# ------------------------------------------------------------------ answers
+HYPOTHESIS = re.compile(r"^\**\s*For REWE \(hypothesis\):?\s*\**\s*", re.I)
+
+
+def render_answer(text: str, ids: list):
+    """Evidence as normal text with APA citations; the REWE implication in a dashed hypothesis frame."""
+    body, hypotheses = [], []
+    for line in text.splitlines():
+        (hypotheses if HYPOTHESIS.match(line.strip()) else body).append(line)
+    st.markdown("\n".join(body).strip())
+    for h in hypotheses:
+        claim = html.escape(HYPOTHESIS.sub("", h.strip()))
+        st.markdown(f'<div class="rm-hypothesis"><b>For REWE · hypothesis</b><br>{claim}</div>', unsafe_allow_html=True)
+    if ids:
+        with st.expander(f":material/menu_book: Evidence · {len(ids)} peer reviewed source{'s' if len(ids) > 1 else ''} (APA 7)"):
+            source_list(ids)
+    st.caption(":material/auto_awesome: Written by AI from the sources above. Check them before you act on it.")
 
 
 # ------------------------------------------------------------------ page: chat
@@ -172,10 +181,10 @@ def page_chat():
                 st.rerun()
     for n, m in enumerate(chat):
         with st.chat_message(m["role"]):
-            st.markdown(m["content"])
-            if m.get("sources"):
-                with st.expander(f"References, APA 7 ({len(m['sources'])})"):
-                    source_list(m["sources"])
+            if m["role"] == "assistant":
+                render_answer(m["content"], m.get("sources") or [])
+            else:
+                st.markdown(m["content"])
             if m["role"] == "assistant" and m.get("interaction_id"):
                 rating_widget(m, f"chat_{n}")
     question = st.chat_input("Ask a question about consumer psychology in retail") or st.session_state.pop("pending_question", None)
@@ -185,7 +194,7 @@ def page_chat():
         pool = kb.by_topics(selected)
         with st.chat_message("assistant"):
             try:
-                with st.spinner("Reading the knowledge base"):
+                with st.spinner(f"Reading {len(pool)} peer reviewed articles"):
                     guidance = feedback.guidance_prompt(feedback.learned_guidance())
                     started = time.time()
                     answer, ids = llm.answer_with_citations(question, pool, chat, guidance)
@@ -193,10 +202,7 @@ def page_chat():
             except Exception as exc:
                 st.error(f"The language model could not be reached: {exc}")
                 return
-            st.markdown(answer)
-            if ids:
-                with st.expander(f"References, APA 7 ({len(ids)})"):
-                    source_list(ids)
+            render_answer(answer, ids)
         interaction_id = None
         try:
             interaction_id = store.log_interaction({
@@ -313,13 +319,10 @@ def page_automations():
     for s in subs:
         with st.container(border=True):
             st.markdown(describe_sub(s))
-            state = "Active" if s.get("active") else "Paused"
-            st.markdown(
-                f"<span class='rm-pill{'' if s.get('active') else ' warn'}'>{state}</span>"
-                f"<span class='rm-note'>Next: {schedule.local_str(s['next_run_at']) if s.get('active') else 'paused'}"
-                f"  ·  Last sent: {schedule.local_str(s.get('last_run_at'))}</span>",
-                unsafe_allow_html=True,
-            )
+            state = ":green-badge[:material/schedule: Active]" if s.get("active") else ":orange-badge[:material/pause: Paused]"
+            nxt = schedule.local_str(s["next_run_at"]) if s.get("active") else "paused"
+            st.markdown(f"{state} <span class='rm-note'>Next: {nxt}  ·  Last sent: {schedule.local_str(s.get('last_run_at'))}</span>",
+                        unsafe_allow_html=True)
             c1, c2, c3, _ = st.columns([1, 1, 1, 3])
             if c1.button("Send now", key=f"now_{s['id']}", type="primary", width="stretch"):
                 with st.spinner("Writing and sending"):
@@ -388,7 +391,7 @@ def rating_widget(item: dict, key: str):
 
 # ------------------------------------------------------------------ page: analytics
 def bar(df: pd.DataFrame, x: str, y: str, horizontal: bool = False):
-    st.bar_chart(df, x=x, y=y, color="#1f6f4a", horizontal=horizontal, height=260)
+    st.bar_chart(df, x=x, y=y, horizontal=horizontal, height=260)
 
 
 def page_analytics():
@@ -563,14 +566,14 @@ def page_kb():
     header("Knowledge base", "The fixed foundation of every answer and every delivery: peer reviewed journal articles only.")
     items = kb.articles()
     c1, c2, c3 = st.columns(3)
-    c1.metric("Articles", len(items))
+    c1.metric("Peer reviewed articles", len(items))
     c2.metric("Topics", len(kb.topics()))
-    c3.metric("Peer reviewed journal articles", f"{len(items)}")
+    c3.metric("Read from source", f"{sum(a['checked'] for a in items)} of {len(items)}")
     selected = st.multiselect("Topic", kb.topics(), placeholder="All topics")
     for a in sorted(kb.by_topics(selected), key=lambda x: x["id"]):
         with st.expander(f"{a['id']}  ·  {kb.short_cite(a)}  ·  {a['title']}"):
-            pill = "<span class='rm-pill'>read from source</span>" if a["checked"] else "<span class='rm-pill warn'>not yet verified</span>"
-            st.markdown(f"<span class='rm-pill'>{a['topic']}</span>{pill}", unsafe_allow_html=True)
+            check = ":green-badge[:material/verified: Read from source]" if a["checked"] else ":orange-badge[:material/help: Not yet verified]"
+            st.markdown(f":gray-badge[{a['topic']}] {check}")
             st.markdown(f"**Mechanism:** {a['mechanism']}")
             st.markdown(f"**Key findings:** {a['findings']}")
             st.markdown(f"**Method and sample:** {a['method']}")
@@ -641,7 +644,7 @@ def page_check():
     def row(label, ok, detail):
         c1, c2 = st.columns([1, 3])
         c1.markdown(f"**{label}**")
-        c2.markdown(f"{'🟢' if ok else '🔴'} {detail}")
+        c2.markdown(f"{':green-badge[:material/check: Ready]' if ok else ':red-badge[:material/close: Missing]'} {detail}")
 
     row("Knowledge base", True, f"{len(kb.articles())} articles in {len(kb.topics())} topics")
     row("Language model", config.has("ANTHROPIC_API_KEY"),
@@ -692,12 +695,19 @@ def page_check():
 
 # ------------------------------------------------------------------ run
 gate()
-page = profile_sidebar()
-{
-    "Ask the research": page_chat,
-    "Automations": page_automations,
-    "Knowledge base": page_kb,
-    "Delivery log": page_log,
-    "Analytics": page_analytics,
-    "System check": page_check,
-}[page]()
+navigation = st.navigation({
+    "Research": [
+        st.Page(page_chat, title="Ask the research", icon=":material/forum:", url_path="ask", default=True),
+        st.Page(page_kb, title="Knowledge base", icon=":material/menu_book:", url_path="knowledge-base"),
+    ],
+    "Briefings": [
+        st.Page(page_automations, title="Automations", icon=":material/schedule_send:", url_path="automations"),
+        st.Page(page_log, title="Delivery log", icon=":material/inbox:", url_path="delivery-log"),
+    ],
+    "Team": [
+        st.Page(page_analytics, title="Analytics", icon=":material/insights:", url_path="analytics"),
+        st.Page(page_check, title="System check", icon=":material/settings:", url_path="system-check"),
+    ],
+})
+profile_sidebar()
+navigation.run()

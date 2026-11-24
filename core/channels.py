@@ -11,6 +11,7 @@ import requests
 
 from . import config
 
+AI_NOTE = "Written by AI (Claude) from the peer reviewed articles listed above. Check them before you act on it."
 DISCLAIMER = "RetailMind AI is a student prototype (CBS International Business School). It is not an official REWE product."
 
 
@@ -23,14 +24,14 @@ def linkedin_share_url(text: str) -> str:
 
 
 def _wrap(title: str, inner_html: str, manage_url: str = "") -> str:
-    manage = f'<p style="margin:0 0 6px"><a href="{manage_url}" style="color:#666">Manage your automations</a></p>' if manage_url else ""
+    manage = f'<p style="margin:0 0 6px"><a href="{manage_url}" style="color:#5F6368">Manage your automations</a></p>' if manage_url else ""
     return f"""<div style="background:#f4f1ec;padding:24px 0;font-family:Arial,Helvetica,sans-serif">
 <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden">
 <div style="background:#1f2a24;color:#ffffff;padding:18px 28px">
 <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#d9b36c">RetailMind AI</div>
 <div style="font-size:19px;font-weight:bold;margin-top:4px">{html.escape(title)}</div></div>
 <div style="padding:22px 28px;color:#222;font-size:15px;line-height:1.55">{inner_html}</div>
-<div style="padding:14px 28px 20px;color:#777;font-size:12px;border-top:1px solid #eee">{manage}{DISCLAIMER}</div>
+<div style="padding:14px 28px 20px;color:#5F6368;font-size:12px;border-top:1px solid #eee"><p style="margin:0 0 6px">{AI_NOTE}</p>{manage}{DISCLAIMER}</div>
 </div></div>"""
 
 
@@ -51,10 +52,10 @@ def build_email(title: str, body: str, sources: list, fmt: str) -> tuple:
             'border-radius:20px;text-decoration:none;font-weight:bold">Open in LinkedIn</a></p>'
             f'<h4 style="margin-bottom:6px">Based on (APA 7)</h4><ul style="padding-left:18px;font-size:13px;list-style:none">{src_html}</ul>'
         )
-        plain = f"{body}\n\nBased on:\n{src_text}\n\n{DISCLAIMER}"
+        plain = f"{body}\n\nBased on:\n{src_text}\n\n{AI_NOTE}\n{DISCLAIMER}"
     else:
         inner = md.markdown(body) + f'<h4 style="margin-bottom:6px">References (APA 7)</h4><ul style="padding-left:18px;font-size:13px;list-style:none">{src_html}</ul>'
-        plain = f"{body}\n\nReferences (APA 7):\n{src_text}\n\n{DISCLAIMER}"
+        plain = f"{body}\n\nReferences (APA 7):\n{src_text}\n\n{AI_NOTE}\n{DISCLAIMER}"
     return plain, _wrap(title, inner, manage_url)
 
 

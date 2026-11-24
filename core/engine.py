@@ -41,7 +41,7 @@ def deliver(sub: dict, piece: dict) -> str:
         head = "*RetailMind AI*\n" + ("Your LinkedIn post draft\n\n" if sub["format"] == "linkedin" else "\n")
         try:
             # the database column is still called "whatsapp"; it now holds the Telegram chat id
-            return channels.send_telegram(sub.get("whatsapp", ""), f"{head}{piece['body']}\n\n*{label}*\n{lines}")
+            return channels.send_telegram(sub.get("whatsapp", ""), f"{head}{piece['body']}\n\n*{label}*\n{lines}\n\n{channels.AI_NOTE}")
         except channels.TelegramNotConnected as exc:
             note = (
                 "This was meant for Telegram, but your Telegram is not connected. "
