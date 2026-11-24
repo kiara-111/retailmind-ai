@@ -1,5 +1,6 @@
 """RetailMind AI: research on demand for marketing leaders. Student prototype (CBS)."""
 import html
+import json
 import re
 import time
 
@@ -71,7 +72,48 @@ def profile_sidebar():
             st.caption(f"Signed in as {p['email']}")
             telegram_box(p)
         st.divider()
+        appearance_toggle()
         st.caption(f"**RetailMind AI**  \n{DISCLAIMER}")
+
+
+PAGE_PATHS = ["", "ask", "knowledge-base", "automations", "delivery-log", "analytics", "system-check"]
+
+# Streamlit keeps each visitor's theme choice ("Light", "Dark" or "System") in that browser's
+# localStorage and reads it when the page loads. Writing it there and reloading switches the theme
+# for this visitor only. The key carries an internal version number, so a few versions are written.
+THEME_SCRIPT = """<script>
+(function () {
+  const choice = %s;
+  const pages = %s;
+  const path = window.location.pathname.replace(/\\/+$/, "");
+  let base = path;
+  for (const p of pages) {
+    if (p && path.endsWith("/" + p)) { base = path.slice(0, -(p.length + 1)); break; }
+  }
+  for (const p of pages) {
+    const full = (base + "/" + p).replace(/\\/+$/, "") || "/";
+    for (const variant of new Set([full, full + "/"])) {
+      for (let v = 2; v <= 5; v++) {
+        window.localStorage.setItem("stActiveTheme-" + variant + "-v" + v, JSON.stringify(choice));
+      }
+    }
+  }
+  window.location.reload();
+})();
+</script>"""
+
+
+def appearance_toggle():
+    """Light/dark switch for demos. Without it the app follows the system setting."""
+    current = (getattr(st.context.theme, "type", None) or "light").lower()
+    dark = st.toggle(
+        ":material/dark_mode: Dark mode",
+        value=current == "dark",
+        help="Switches between light and dark for this browser. The page reloads, so the current chat and profile are cleared.",
+    )
+    if dark != (current == "dark"):
+        st.html(THEME_SCRIPT % (json.dumps("Dark" if dark else "Light"), json.dumps(PAGE_PATHS)),
+                unsafe_allow_javascript=True)
 
 
 @st.cache_data(show_spinner=False)
