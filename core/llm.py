@@ -284,15 +284,32 @@ BRIEF_TASKS = {
                "why": "2 sentences: why it works psychologically",
                "rewe": "1 to 2 sentences: what it could mean for REWE, worded as a hypothesis"}],
  "takeaway": "2 sentences: the overall implication for REWE, worded as a hypothesis",
- "caveat": "1 to 2 sentences on the most important limitations"}
-Write exactly one section per article, in the order given. About 450 to 600 words in total.""",
+ "caveat": "1 to 2 sentences on the most important limitations",
+ "options": [{"title": "short name of a concrete measure, 3 to 6 words",
+              "action": "1 to 2 sentences: what exactly the team would do in stores, online or in communication",
+              "effort": "low, medium or high",
+              "owner": "the team that would typically own it, e.g. Category management, Pricing, CRM, Store operations, Brand marketing",
+              "measure": "the one KPI that shows whether it works, e.g. unit sales, basket size, redemption rate",
+              "based_on": ["R05"]}],
+ "start_with": "1 to 2 sentences: which option to try first and why (effort versus strength of evidence)",
+ "decide_by": "1 to 2 sentences: a simple pilot design and the rule for scaling or stopping, e.g. test stores versus control stores for 4 to 6 weeks"}
+Write exactly one section per article, in the order given, and 3 options. Each option must follow from at least one
+article and name it in based_on. Options are ideas to test, never proven results. About 650 to 850 words in total.""",
     "insights": """Write a key insights briefing for a senior marketing leader. Reply with JSON only:
 {"headline": "the key message in one sentence, max 18 words",
  "lead": "2 to 3 sentences that back up the headline; cite with ids like [R05]",
  "bullets": [{"id": "R05", "text": "one finding in 1 to 2 sentences, concrete, with a number if the summary gives one"}],
  "takeaway": "1 to 2 sentences for REWE, worded as a hypothesis",
- "caveat": "1 sentence on the main limitation"}
-3 to 4 bullets, each based on one of the articles. About 200 to 260 words in total.""",
+ "caveat": "1 sentence on the main limitation",
+ "options": [{"title": "short name of a concrete measure, 3 to 6 words",
+              "action": "1 to 2 sentences: what exactly the team would do in stores, online or in communication",
+              "effort": "low, medium or high",
+              "owner": "the team that would typically own it, e.g. Category management, Pricing, CRM, Store operations, Brand marketing",
+              "measure": "the one KPI that shows whether it works, e.g. unit sales, basket size, redemption rate",
+              "based_on": ["R05"]}],
+ "start_with": "1 to 2 sentences: which option to try first and why (effort versus strength of evidence)",
+ "decide_by": "1 to 2 sentences: a simple pilot design and the rule for scaling or stopping, e.g. test stores versus control stores for 4 to 6 weeks"}
+3 to 4 bullets, each based on one of the articles, and 2 options that follow from them. About 300 to 380 words in total.""",
 }
 
 
@@ -304,7 +321,7 @@ def generate_brief(fmt: str, topics: list, focus: list, user_name: str = "", tra
             f"Selected topics: {', '.join(topics) if topics else 'all topics'}.\n"
             f"Articles in order: {', '.join(allowed)}.\n\n{BRIEF_TASKS[fmt]}")
     _LOCAL.usage = {}
-    raw = ask(system, [{"role": "user", "content": user}], max_tokens=3000)
+    raw = ask(system, [{"role": "user", "content": user}], max_tokens=4000)
     match = re.search(r"\{.*\}", raw, re.S)
     if not match:
         raise RuntimeError("The briefing could not be read (no JSON).")
@@ -334,6 +351,20 @@ def generate_brief(fmt: str, topics: list, focus: list, user_name: str = "", tra
             brief["bullets"].append({"id": x["id"], "text": txt(x.get("text"), x["id"])})
         elif isinstance(x, dict):
             stats["citations_removed"] += 1
+    brief["options"] = []
+    for o in data.get("options") or []:
+        if not isinstance(o, dict):
+            continue
+        based = [i for i in (o.get("based_on") or []) if i in allowed]
+        if not based:  # an option without a valid source is dropped, like any other unsupported claim
+            stats["citations_removed"] += 1
+            continue
+        effort = str(o.get("effort", "")).strip().lower()
+        brief["options"].append({"title": txt(o.get("title")), "action": txt(o.get("action")),
+                                 "effort": effort if effort in ("low", "medium", "high") else "medium",
+                                 "owner": txt(o.get("owner")), "measure": txt(o.get("measure")), "based_on": based})
+    brief["start_with"] = txt(data.get("start_with")) if brief["options"] else ""
+    brief["decide_by"] = txt(data.get("decide_by")) if brief["options"] else ""
     if not brief["headline"] or not (brief["sections"] or brief["bullets"]):
         raise RuntimeError("The briefing was incomplete.")
     used = {s["id"] for s in brief["sections"]} | {x["id"] for x in brief["bullets"]}
