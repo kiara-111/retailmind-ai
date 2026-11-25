@@ -50,6 +50,16 @@ def ask(system: str, messages: list, max_tokens: int = 1200) -> str:
         system=system,
         messages=messages,
     )
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        # The answer was cut off at the length limit: ask again once with a much larger budget.
+        response = _client().messages.create(
+            model=config.get("ANTHROPIC_MODEL", config.DEFAULT_MODEL),
+            max_tokens=max(max_tokens * 4, 8000),
+            system=system,
+            messages=messages,
+        )
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            raise RuntimeError("The answer was cut off at the length limit twice. Please try again.")
     usage = getattr(response, "usage", None)
     _LOCAL.usage = {
         "model": getattr(response, "model", None) or model_name(),
@@ -262,3 +272,72 @@ def check_claim(claim: str, articles: list, trace: dict = None) -> dict:
     if trace is not None:
         trace.update(last_usage(), pool=len(articles), sources=ids, citations_kept=len(ids), citations_removed=removed)
     return result
+
+
+# ---------- structured briefings (layout is built in core/brief.py)
+BRIEF_TASKS = {
+    "report": """Write a research report for a senior marketing leader. Reply with JSON only:
+{"headline": "the key message across all articles in one sentence, max 20 words",
+ "lead": "3 to 4 sentences that back up the headline: what the studies together show and why it matters for grocery retail; cite with ids like [R05]",
+ "sections": [{"id": "R05", "mechanism": "the psychological mechanism, 2 to 6 words",
+               "what": "2 to 3 sentences: what the study found, with method or numbers if given",
+               "why": "2 sentences: why it works psychologically",
+               "rewe": "1 to 2 sentences: what it could mean for REWE, worded as a hypothesis"}],
+ "takeaway": "2 sentences: the overall implication for REWE, worded as a hypothesis",
+ "caveat": "1 to 2 sentences on the most important limitations"}
+Write exactly one section per article, in the order given. About 450 to 600 words in total.""",
+    "insights": """Write a key insights briefing for a senior marketing leader. Reply with JSON only:
+{"headline": "the key message in one sentence, max 18 words",
+ "lead": "2 to 3 sentences that back up the headline; cite with ids like [R05]",
+ "bullets": [{"id": "R05", "text": "one finding in 1 to 2 sentences, concrete, with a number if the summary gives one"}],
+ "takeaway": "1 to 2 sentences for REWE, worded as a hypothesis",
+ "caveat": "1 sentence on the main limitation"}
+3 to 4 bullets, each based on one of the articles. About 200 to 260 words in total.""",
+}
+
+
+def generate_brief(fmt: str, topics: list, focus: list, user_name: str = "", trace: dict = None) -> dict:
+    """Structured report or insights briefing. Every id is checked against the selected articles."""
+    allowed = [a["id"] for a in focus]
+    system = f"{GROUNDING}\n\n<knowledge_base>\n{kb.for_prompt(focus)}\n</knowledge_base>"
+    user = (f"Reader: {user_name or 'a senior marketing leader'} at REWE.\n"
+            f"Selected topics: {', '.join(topics) if topics else 'all topics'}.\n"
+            f"Articles in order: {', '.join(allowed)}.\n\n{BRIEF_TASKS[fmt]}")
+    _LOCAL.usage = {}
+    raw = ask(system, [{"role": "user", "content": user}], max_tokens=3000)
+    match = re.search(r"\{.*\}", raw, re.S)
+    if not match:
+        raise RuntimeError("The briefing could not be read (no JSON).")
+    data = json.loads(match.group(0))
+    stats = {"citations_kept": 0, "citations_removed": 0}
+
+    def txt(value, own=None):
+        s = {}
+        raw_text = str(value or "")
+        if own:  # the block already names its own source in small print, so drop the inline repeat
+            raw_text = re.sub(rf"\s*\[{own}\]", "", raw_text)
+        out = clean(kb.apply_citations(clean(raw_text), allowed, s)[0])
+        stats["citations_removed"] += s.get("citations_removed", 0)
+        return out
+
+    brief = {"kind": fmt, "headline": txt(data.get("headline")), "lead": txt(data.get("lead")),
+             "takeaway": txt(data.get("takeaway")), "caveat": txt(data.get("caveat")), "sections": [], "bullets": []}
+    for s in data.get("sections") or []:
+        if isinstance(s, dict) and s.get("id") in allowed:
+            brief["sections"].append({"id": s["id"], "mechanism": txt(s.get("mechanism"), s["id"]),
+                                      "what": txt(s.get("what"), s["id"]), "why": txt(s.get("why"), s["id"]),
+                                      "rewe": txt(s.get("rewe"), s["id"])})
+        elif isinstance(s, dict):
+            stats["citations_removed"] += 1
+    for x in data.get("bullets") or []:
+        if isinstance(x, dict) and x.get("id") in allowed:
+            brief["bullets"].append({"id": x["id"], "text": txt(x.get("text"), x["id"])})
+        elif isinstance(x, dict):
+            stats["citations_removed"] += 1
+    if not brief["headline"] or not (brief["sections"] or brief["bullets"]):
+        raise RuntimeError("The briefing was incomplete.")
+    used = {s["id"] for s in brief["sections"]} | {x["id"] for x in brief["bullets"]}
+    stats["citations_kept"] = len(used)
+    if trace is not None:
+        trace.update(last_usage(), **stats)
+    return brief

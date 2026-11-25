@@ -25,18 +25,27 @@ def linkedin_share_url(text: str) -> str:
 
 def _wrap(title: str, inner_html: str, manage_url: str = "") -> str:
     manage = f'<p style="margin:0 0 6px"><a href="{manage_url}" style="color:#5F6368">Manage your automations</a></p>' if manage_url else ""
-    return f"""<div style="background:#f4f1ec;padding:24px 0;font-family:Arial,Helvetica,sans-serif">
+    return f"""<div style="background:#F3F5F2;padding:24px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
 <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden">
 <div style="background:#1f2a24;color:#ffffff;padding:18px 28px">
 <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#d9b36c">RetailMind AI</div>
 <div style="font-size:19px;font-weight:bold;margin-top:4px">{html.escape(title)}</div></div>
-<div style="padding:22px 28px;color:#222;font-size:15px;line-height:1.55">{inner_html}</div>
+<div style="padding:26px 30px;color:#1B1F1C;font-size:15px;line-height:1.6">{inner_html}</div>
 <div style="padding:14px 28px 20px;color:#5F6368;font-size:12px;border-top:1px solid #eee"><p style="margin:0 0 6px">{AI_NOTE}</p>{manage}{DISCLAIMER}</div>
 </div></div>"""
 
 
-def build_email(title: str, body: str, sources: list, fmt: str) -> tuple:
-    """Returns (plain_text, html)."""
+def build_email(title: str, body: str, sources: list, fmt: str, brief_data: dict = None, topics: list = None,
+                note: str = "") -> tuple:
+    """Returns (plain_text, html). With brief_data the new structured layout is used."""
+    if brief_data:
+        from . import brief
+
+        refs = "\n".join(s["apa"] for s in sources)
+        plain = f"{note}{brief.to_plain(brief_data)}\n\nReferences (APA 7):\n{refs}\n\n{AI_NOTE}\n{DISCLAIMER}"
+        note_html = (f'<p style="margin:0 0 16px;padding:10px 14px;border-radius:8px;background:#F3F5F2;font-size:13px;'
+                     f'color:#5F6368">{html.escape(note.strip())}</p>') if note else ""
+        return plain, _wrap(title, note_html + brief.to_email_html(brief_data, topics or [], sources), config.get("APP_URL"))
     src_html = "".join(
         f'<li style="margin-bottom:8px">{s["apa_html"]}</li>'
         for s in sources

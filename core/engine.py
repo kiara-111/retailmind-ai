@@ -1,5 +1,5 @@
 """Runs one automation: pick articles, let the model write, deliver, log."""
-from . import channels, kb, llm, schedule, store
+from . import brief, channels, kb, llm, schedule, store
 
 FOCUS_COUNT = {"report": 3, "insights": 2, "linkedin": 1}
 
@@ -30,10 +30,20 @@ def compose(sub: dict) -> dict:
     focus, covered = pick_focus(sub)
     trace = {"topics": sub.get("topics") or ["All topics"], "pool": len(kb.by_topics(sub.get("topics") or [])),
              "sources": [a["id"] for a in focus], "format": llm.FORMATS[sub["format"]]}
-    body = llm.generate(sub["format"], sub["channel"], sub.get("topics") or [], focus, sub.get("user_name", ""), trace)
+    brief_data = None
+    if sub["format"] in llm.BRIEF_TASKS:
+        try:
+            brief_data = llm.generate_brief(sub["format"], sub.get("topics") or [], focus, sub.get("user_name", ""), trace)
+        except (ValueError, RuntimeError) as err:
+            trace["layout_fallback"] = str(err)[:120]
+    if brief_data:
+        body = brief.to_markdown(brief_data)
+    else:
+        body = llm.generate(sub["format"], sub["channel"], sub.get("topics") or [], focus, sub.get("user_name", ""), trace)
     sources = [{"id": a["id"], "apa": kb.reference(a), "apa_html": kb.reference(a, "html"),
                 "apa_md": kb.reference(a, "md")} for a in focus]
-    return {"body": body, "sources": sources, "covered": covered, "title": title_for(sub), "trace": trace}
+    return {"body": body, "sources": sources, "covered": covered, "title": title_for(sub), "trace": trace,
+            "brief": brief_data}
 
 
 def deliver(sub: dict, piece: dict) -> str:
@@ -43,16 +53,19 @@ def deliver(sub: dict, piece: dict) -> str:
         head = "*RetailMind AI*\n" + ("Your LinkedIn post draft\n\n" if sub["format"] == "linkedin" else "\n")
         try:
             # the database column is still called "whatsapp"; it now holds the Telegram chat id
-            return channels.send_telegram(sub.get("whatsapp", ""), f"{head}{piece['body']}\n\n*{label}*\n{lines}\n\n{channels.AI_NOTE}")
+            text = brief.to_telegram(piece["brief"]) if piece.get("brief") else piece["body"]
+            return channels.send_telegram(sub.get("whatsapp", ""), f"{head}{text}\n\n*{label}*\n{lines}\n\n{channels.AI_NOTE}")
         except channels.TelegramNotConnected as exc:
             note = (
                 "This was meant for Telegram, but your Telegram is not connected. "
                 "Connect it in the RetailMind app under Your profile to receive the next issue there.\n\n"
             )
-            plain, html_body = channels.build_email(piece["title"], note + piece["body"], piece["sources"], sub["format"])
+            plain, html_body = channels.build_email(piece["title"], note + piece["body"], piece["sources"], sub["format"],
+                                                    piece.get("brief"), sub.get("topics") or [], note)
             channels.send_email(sub["email"], f"RetailMind AI | {piece['title']}", plain, html_body)
             return f"Telegram not connected, delivered by email instead. ({exc})"
-    plain, html_body = channels.build_email(piece["title"], piece["body"], piece["sources"], sub["format"])
+    plain, html_body = channels.build_email(piece["title"], piece["body"], piece["sources"], sub["format"],
+                                            piece.get("brief"), sub.get("topics") or [])
     return channels.send_email(sub["email"], f"RetailMind AI | {piece['title']}", plain, html_body)
 
 
