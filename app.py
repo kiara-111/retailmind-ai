@@ -446,8 +446,7 @@ def page_automations():
                     with st.expander("What was written", expanded=result["status"] != "sent"):
                         show_piece(s, result["piece"])
     st.markdown(
-        "<p class='rm-note'>Scheduled deliveries are checked twice per hour, so they can arrive up to about "
-        "30 minutes after the chosen time. If Telegram is not connected, Telegram briefings arrive by email instead.</p>",
+        "<p class='rm-note'>Scheduled deliveries are checked every 10 minutes, so they arrive within about 10 minutes of the chosen time. If Telegram is not connected, Telegram briefings arrive by email instead.</p>",
         unsafe_allow_html=True,
     )
 
