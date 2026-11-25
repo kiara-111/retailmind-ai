@@ -204,6 +204,62 @@ def render_answer(text: str, ids: list):
     st.caption(":material/auto_awesome: Written by AI from the sources above. Check them before you act on it.")
 
 
+# ------------------------------------------------------------------ pipeline panel
+def pipeline_panel(trace: dict, label: str = "How this answer was built"):
+    """Shows the real steps of one run: topic → sources → Claude → evidence check → channel."""
+    if not trace:
+        return
+    lookup = kb.by_id()
+    with st.expander(f":material/account_tree: {label}"):
+        steps = st.columns(5)
+        topics = ", ".join(trace.get("topics") or []) or "All topics"
+        with steps[0]:
+            st.markdown("**1 · Topic**")
+            st.caption(f"{topics}  \n{trace.get('pool', '?')} peer reviewed articles in scope")
+        with steps[1]:
+            st.markdown("**2 · Sources**")
+            ids = trace.get("sources") or []
+            if ids:
+                st.caption("  \n".join(
+                    f"[{kb.intext(lookup[i])}]({kb.doi_url(lookup[i])})" if i in lookup and lookup[i]["doi"] else i for i in ids))
+            else:
+                st.caption("No source cited")
+        with steps[2]:
+            st.markdown("**3 · Claude**")
+            tokens_in, tokens_out = trace.get("input_tokens") or 0, trace.get("output_tokens") or 0
+            lines = [str(trace.get("model") or llm.model_name())]
+            if trace.get("latency_ms"):
+                lines.append(f"{trace['latency_ms'] / 1000:.1f} s")
+            if tokens_in or tokens_out:
+                lines.append(f"{tokens_in:,} in · {tokens_out:,} out tokens")
+                lines.append(f"≈ {config.cost_usd(tokens_in, tokens_out) * 100:.2f} US cents")
+            st.caption("  \n".join(lines))
+        with steps[3]:
+            st.markdown("**4 · Evidence check**")
+            kept, removed = trace.get("citations_kept", len(ids)), trace.get("citations_removed", 0)
+            check = [f"{kept} citation{'s' if kept != 1 else ''} verified against the dataset"]
+            check.append(f"{removed} unsupported citation{'s' if removed != 1 else ''} removed" if removed else "no unsupported citation")
+            if trace.get("auto_score"):
+                check.append(f"groundedness check: {trace['auto_score']} / 5")
+            st.caption("  \n".join(check))
+        with steps[4]:
+            st.markdown("**5 · Channel**")
+            channel = trace.get("channel") or "In the app"
+            detail = trace.get("delivery") or ""
+            st.caption(f"{channel}" + (f"  \n{detail}" if detail else ""))
+        st.caption("Costs use the list price of Claude Sonnet 5.5 (2 USD per million input and 10 USD per million output tokens).")
+
+
+def trace_from_record(r: dict) -> dict:
+    """Rebuilds a pipeline view for stored briefings (older runs have fewer details)."""
+    return {
+        "topics": r.get("topics") or [], "pool": len(kb.by_topics(r.get("topics") or [])),
+        "sources": r.get("cited_ids") or [], "model": r.get("model"), "latency_ms": r.get("latency_ms"),
+        "citations_kept": r.get("n_citations") if r.get("n_citations") is not None else len(r.get("cited_ids") or []),
+        "auto_score": r.get("auto_score"), "channel": llm.CHANNELS.get(r.get("channel"), r.get("channel")),
+    }
+
+
 # ------------------------------------------------------------------ page: chat
 def page_chat():
     header("Ask the research", "Answers come only from the curated set of peer reviewed articles. Every claim carries its source.")
@@ -225,6 +281,7 @@ def page_chat():
         with st.chat_message(m["role"]):
             if m["role"] == "assistant":
                 render_answer(m["content"], m.get("sources") or [])
+                pipeline_panel(m.get("trace"))
             else:
                 st.markdown(m["content"])
             if m["role"] == "assistant" and m.get("interaction_id"):
@@ -239,7 +296,8 @@ def page_chat():
                 with st.spinner(f"Reading {len(pool)} peer reviewed articles"):
                     guidance = feedback.guidance_prompt(feedback.learned_guidance())
                     started = time.time()
-                    answer, ids = llm.answer_with_citations(question, pool, chat, guidance)
+                    trace = {"topics": selected or ["All topics"], "channel": "In the app (chat)"}
+                    answer, ids = llm.answer_with_citations(question, pool, chat, guidance, trace)
                     latency = int((time.time() - started) * 1000)
             except Exception as exc:
                 st.error(f"The language model could not be reached: {exc}")
@@ -255,7 +313,7 @@ def page_chat():
         except Exception:
             pass  # analytics must never block an answer
         chat.append({"role": "user", "content": question})
-        chat.append({"role": "assistant", "content": answer, "sources": ids, "interaction_id": interaction_id})
+        chat.append({"role": "assistant", "content": answer, "sources": ids, "interaction_id": interaction_id, "trace": trace})
         st.rerun()
     if chat and st.button("Clear conversation"):
         st.session_state.chat = []
@@ -403,6 +461,92 @@ def show_piece(sub: dict, piece: dict):
     st.markdown("**References (APA 7)**")
     for s in piece["sources"]:
         st.markdown(s["apa_md"])
+    pipeline_panel(piece.get("trace"), "How this briefing was built")
+
+
+# ------------------------------------------------------------------ page: claim check
+VERDICT_BADGE = {
+    "supported": ":green-badge[:material/check_circle: Supported]",
+    "contradicted": ":red-badge[:material/cancel: Contradicted]",
+    "mixed": ":orange-badge[:material/balance: Mixed evidence]",
+    "no_evidence": ":gray-badge[:material/search_off: No evidence in dataset]",
+}
+CLAIM_EXAMPLES = [
+    "Offering fewer product variants increases sales.",
+    "Shoppers notice when package sizes shrink.",
+    "Nudges in the store reliably make baskets healthier.",
+    "Influencer reach matters more than credibility.",
+]
+
+
+def page_claim():
+    header("Claim check", "Test a marketing assumption against the peer reviewed dataset. "
+                          "RetailMind shows the evidence and the counter-evidence, or says plainly that the dataset has none.")
+    selected = st.multiselect("Limit to topics (optional)", kb.topics(), placeholder="All topics", key="claim_topics")
+    cols = st.columns(len(CLAIM_EXAMPLES))
+    for col, ex in zip(cols, CLAIM_EXAMPLES):
+        if col.button(ex, width="stretch", key=f"claim_ex_{ex}"):
+            st.session_state.claim_text = ex
+    with st.form("claim_form"):
+        claim = st.text_area("Your assumption", key="claim_text", height=90,
+                             placeholder="e.g. Loyalty points mainly work because of the discount.")
+        go = st.form_submit_button("Check against the evidence", type="primary")
+    if go and claim.strip():
+        pool = kb.by_topics(selected)
+        trace = {"topics": selected or ["All topics"], "channel": "In the app (claim check)"}
+        try:
+            with st.spinner(f"Checking against {len(pool)} peer reviewed articles"):
+                result = llm.check_claim(claim.strip(), pool, trace)
+        except Exception as exc:
+            st.error(f"The check could not be completed: {exc}")
+            return
+        record = {"claim": claim.strip(), "result": result, "trace": trace}
+        try:
+            text = f"Verdict: {llm.VERDICTS[result['verdict']]}. {result['summary']}"
+            record["interaction_id"] = store.log_interaction({
+                "email": st.session_state.profile.get("email"), "kind": "claim", "question": claim.strip(),
+                "answer": text, "cited_ids": result["ids"], "topics": selected or feedback.topics_of(result["ids"]),
+                "model": trace.get("model") or llm.model_name(), "latency_ms": trace.get("latency_ms"),
+                "answer_words": len(text.split()), "n_citations": len(result["ids"]),
+                "not_covered": result["verdict"] == "no_evidence",
+            })
+        except Exception:
+            pass
+        st.session_state.claim_result = record
+    record = st.session_state.get("claim_result")
+    if not record:
+        return
+    r = record["result"]
+    lookup = kb.by_id()
+    st.divider()
+    st.markdown(f"#### “{record['claim']}”")
+    st.markdown(VERDICT_BADGE[r["verdict"]])
+    st.markdown(r["summary"])
+    if r["verdict"] != "no_evidence":
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**:material/thumb_up: Evidence for**")
+            for e in r["evidence"] or []:
+                st.markdown(f"- {e['finding']} ({kb.intext(lookup[e['id']])})")
+            if not r["evidence"]:
+                st.caption("No supporting study in the dataset.")
+        with c2:
+            st.markdown("**:material/thumb_down: Evidence against or limits**")
+            for e in r["counter_evidence"] or []:
+                st.markdown(f"- {e['finding']} ({kb.intext(lookup[e['id']])})")
+            if not r["counter_evidence"]:
+                st.caption("No contradicting study in the dataset.")
+        if r["for_rewe"]:
+            st.markdown(f'<div class="rm-hypothesis"><b>For REWE · hypothesis</b><br>{html.escape(r["for_rewe"])}</div>',
+                        unsafe_allow_html=True)
+        with st.expander(f":material/menu_book: Evidence · {len(r['ids'])} peer reviewed source{'s' if len(r['ids']) != 1 else ''} (APA 7)"):
+            source_list(r["ids"])
+    else:
+        st.caption("RetailMind does not fill gaps with general knowledge. The question is listed as a knowledge gap under Analytics.")
+    st.caption(":material/auto_awesome: Written by AI from the sources above. Check them before you act on it.")
+    pipeline_panel(record["trace"], "How this check was built")
+    if record.get("interaction_id"):
+        rating_widget(record, "claim")
 
 
 # ------------------------------------------------------------------ rating
@@ -449,6 +593,10 @@ def page_analytics():
         st.info("No answers yet. Ask a question under **Ask the research** or send a briefing, then rate it.")
         return
     df = pd.DataFrame(rows)
+    for col in ["kind", "question", "answer", "comment", "format", "channel", "rating", "auto_score", "n_citations",
+                "answer_words", "latency_ms", "not_covered", "tags", "cited_ids", "topics", "auto_reason"]:
+        if col not in df.columns:
+            df[col] = None  # older or unrated rows may lack a field
     for col in ["rating", "auto_score", "n_citations", "answer_words", "latency_ms"]:
         df[col] = pd.to_numeric(df.get(col), errors="coerce")
     df["created"] = pd.to_datetime(df["created_at"], utc=True).dt.tz_convert(schedule.TZ)
@@ -458,7 +606,7 @@ def page_analytics():
     rated = df[df["rating"].notna()]
 
     k = st.columns(6)
-    k[0].metric("Chat answers", int((df["kind"] == "chat").sum()))
+    k[0].metric("Answers and claim checks", int(df["kind"].isin(["chat", "claim"]).sum()))
     k[1].metric("Briefings sent", int((df["kind"] == "delivery").sum()))
     k[2].metric("Rated", f"{len(rated) / len(df):.0%}")
     k[3].metric("Reader rating", f"{rated['rating'].mean():.1f} / 5" if len(rated) else "n/a")
@@ -672,8 +820,10 @@ def rate_delivery(d: dict):
         except Exception:
             pass
         item["interaction_id"] = match["id"] if match else None
+        item["trace"] = trace_from_record(match) if match else None
         if match and match.get("rating"):
             item["rated"] = int(match["rating"])
+    pipeline_panel(item.get("trace"), "How this briefing was built")
     if item.get("interaction_id"):
         rating_widget(item, key)
 
@@ -740,6 +890,7 @@ gate()
 navigation = st.navigation({
     "Research": [
         st.Page(page_chat, title="Ask the research", icon=":material/forum:", url_path="ask", default=True),
+        st.Page(page_claim, title="Claim check", icon=":material/fact_check:", url_path="claim-check"),
         st.Page(page_kb, title="Knowledge base", icon=":material/menu_book:", url_path="knowledge-base"),
     ],
     "Briefings": [

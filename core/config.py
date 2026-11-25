@@ -3,6 +3,13 @@ import os
 
 TIMEZONE = "Europe/Berlin"
 DEFAULT_MODEL = "claude-sonnet-5-5"
+# USD per million tokens, list price of Claude Sonnet 5.5 (Nov 2026). Used to show the cost of each run.
+PRICE_IN_PER_MTOK = 2.0
+PRICE_OUT_PER_MTOK = 10.0
+
+
+def cost_usd(input_tokens: int, output_tokens: int) -> float:
+    return (input_tokens or 0) / 1e6 * PRICE_IN_PER_MTOK + (output_tokens or 0) / 1e6 * PRICE_OUT_PER_MTOK
 
 
 def get(name: str, default: str = "") -> str:

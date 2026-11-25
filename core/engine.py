@@ -28,10 +28,12 @@ def title_for(sub: dict) -> str:
 
 def compose(sub: dict) -> dict:
     focus, covered = pick_focus(sub)
-    body = llm.generate(sub["format"], sub["channel"], sub.get("topics") or [], focus, sub.get("user_name", ""))
+    trace = {"topics": sub.get("topics") or ["All topics"], "pool": len(kb.by_topics(sub.get("topics") or [])),
+             "sources": [a["id"] for a in focus], "format": llm.FORMATS[sub["format"]]}
+    body = llm.generate(sub["format"], sub["channel"], sub.get("topics") or [], focus, sub.get("user_name", ""), trace)
     sources = [{"id": a["id"], "apa": kb.reference(a), "apa_html": kb.reference(a, "html"),
                 "apa_md": kb.reference(a, "md")} for a in focus]
-    return {"body": body, "sources": sources, "covered": covered, "title": title_for(sub)}
+    return {"body": body, "sources": sources, "covered": covered, "title": title_for(sub), "trace": trace}
 
 
 def deliver(sub: dict, piece: dict) -> str:
@@ -63,6 +65,8 @@ def run(sub: dict, trigger: str = "schedule") -> dict:
     except Exception as exc:  # one failing automation must not stop the others
         status, detail = "failed", str(exc)[:400]
 
+    if piece:
+        piece["trace"].update(channel=llm.CHANNELS.get(sub["channel"], sub["channel"]), delivery=detail, status=status)
     changes = {}
     if status == "sent":
         changes["covered_ids"] = piece["covered"]

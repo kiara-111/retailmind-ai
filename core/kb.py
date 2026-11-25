@@ -160,7 +160,7 @@ def reference(a: dict, style: str = "plain") -> str:
     return ref
 
 
-def apply_citations(text: str, allowed=None) -> tuple:
+def apply_citations(text: str, allowed=None, stats: dict = None) -> tuple:
     """Replaces id citations like [R03] or [R03, R07] with APA 7 in-text citations.
 
     Returns (new_text, cited_ids). Unknown ids are removed rather than shown."""
@@ -170,8 +170,12 @@ def apply_citations(text: str, allowed=None) -> tuple:
     # merge neighbouring brackets: [R01][R02] or [R01] [R02] -> [R01, R02]
     text = re.sub(rf"({ID_RE})\]\s*\[(?={ID_RE})", r"\1, ", text)
 
+    removed = []
+
     def repl(match):
-        ids = [i for i in re.findall(ID_RE, match.group(1)) if i in lookup and i in allowed]
+        found = re.findall(ID_RE, match.group(1))
+        removed.extend(i for i in found if i not in lookup or i not in allowed)
+        ids = [i for i in found if i in lookup and i in allowed]
         if not ids:
             return ""
         for i in ids:
@@ -183,6 +187,9 @@ def apply_citations(text: str, allowed=None) -> tuple:
     text = re.sub(rf"\[({ID_RE}(?:\s*[,;]\s*{ID_RE})*)\]", repl, text)
     text = re.sub(r"\(([^()]*)\)\s*\((?=[A-Z][^()]*, \d{4}\))", r"(\1; ", text)  # (A, 2009) (B, 2011) -> (A, 2009; B, 2011)
     text = re.sub(r" +([.,;:])", r"\1", text)
+    if stats is not None:
+        stats["citations_kept"] = len(cited)
+        stats["citations_removed"] = len(removed)
     return text, cited
 
 

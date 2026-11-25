@@ -1,6 +1,8 @@
 """All calls to the language model. The model only ever sees articles from the knowledge base."""
 import json
 import re
+import threading
+import time
 
 from . import config, kb
 
@@ -32,13 +34,29 @@ def _client():
     return anthropic.Anthropic(api_key=key)
 
 
+_LOCAL = threading.local()
+
+
+def last_usage() -> dict:
+    """Tokens, model and duration of the most recent model call in this thread."""
+    return dict(getattr(_LOCAL, "usage", {}))
+
+
 def ask(system: str, messages: list, max_tokens: int = 1200) -> str:
+    started = time.time()
     response = _client().messages.create(
         model=config.get("ANTHROPIC_MODEL", config.DEFAULT_MODEL),
         max_tokens=max_tokens,
         system=system,
         messages=messages,
     )
+    usage = getattr(response, "usage", None)
+    _LOCAL.usage = {
+        "model": getattr(response, "model", None) or model_name(),
+        "input_tokens": getattr(usage, "input_tokens", 0) or 0,
+        "output_tokens": getattr(usage, "output_tokens", 0) or 0,
+        "latency_ms": int((time.time() - started) * 1000),
+    }
     text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text").strip()
     if not text:
         kinds = ", ".join(getattr(b, "type", "?") for b in response.content) or "none"
@@ -77,10 +95,15 @@ def answer_question(question: str, articles: list, history: list, guidance: str 
     return clean(ask(system, messages, max_tokens=900))
 
 
-def answer_with_citations(question: str, articles: list, history: list, guidance: str = "") -> tuple:
-    """Returns (answer with APA 7 in-text citations, cited article ids)."""
+def answer_with_citations(question: str, articles: list, history: list, guidance: str = "", trace: dict = None) -> tuple:
+    """Returns (answer with APA 7 in-text citations, cited article ids). Fills trace if given."""
+    _LOCAL.usage = {}
     raw = answer_question(question, articles, history, guidance)
-    return kb.apply_citations(raw, [a["id"] for a in articles])
+    stats = {}
+    text, ids = kb.apply_citations(raw, [a["id"] for a in articles], stats)
+    if trace is not None:
+        trace.update(last_usage(), **stats, pool=len(articles), sources=ids)
+    return text, ids
 
 
 # ---------- scheduled content ----------
@@ -116,7 +139,7 @@ _TASKS = {
 }
 
 
-def generate(fmt: str, channel: str, topics: list, focus: list, user_name: str = "") -> str:
+def generate(fmt: str, channel: str, topics: list, focus: list, user_name: str = "", trace: dict = None) -> str:
     task = _TASKS[("linkedin", "any")] if fmt == "linkedin" else _TASKS[(fmt, channel)]
     system = f"{GROUNDING}\n\n<knowledge_base>\n{kb.for_prompt(focus)}\n</knowledge_base>"
     user = (
@@ -124,8 +147,13 @@ def generate(fmt: str, channel: str, topics: list, focus: list, user_name: str =
         f"Selected topics: {', '.join(topics) if topics else 'all topics'}.\n\n"
         f"{task}\n\nDo not add a list of sources at the end, it is attached automatically. Output only the text itself."
     )
+    _LOCAL.usage = {}
     text = clean(ask(system, [{"role": "user", "content": user}], max_tokens=1400))
-    return kb.apply_citations(text, [a["id"] for a in focus])[0]
+    stats = {}
+    text = kb.apply_citations(text, [a["id"] for a in focus], stats)[0]
+    if trace is not None:
+        trace.update(last_usage(), **stats)
+    return text
 
 
 # ---------- natural language automation setup ----------
@@ -172,3 +200,65 @@ def normalise(d: dict, available_topics: list) -> dict:
         "weekday": _int(d.get("weekday"), 0, 0, 6) if freq == "weekly" else None,
         "hour": _int(d.get("hour"), 8, 0, 23),
     }
+
+
+# ---------- claim check
+VERDICTS = {
+    "supported": "Supported",
+    "contradicted": "Contradicted",
+    "mixed": "Mixed evidence",
+    "no_evidence": "No evidence in dataset",
+}
+
+CLAIM_TASK = """A marketing leader states an assumption. Check it ONLY against the articles in <knowledge_base>.
+
+Decide one verdict:
+- "supported": at least one article directly supports the assumption and none clearly contradicts it
+- "contradicted": the articles directly speak against it
+- "mixed": some findings support it, others contradict it or show it only holds under conditions
+- "no_evidence": no article addresses the assumption directly. Do not stretch loosely related findings.
+
+Reply with JSON only, no other text:
+{"verdict": "...",
+ "summary": "two sentences on what the evidence says, citing article ids like [R05]",
+ "evidence": [{"id": "R05", "finding": "one sentence on what this study found that supports the assumption"}],
+ "counter_evidence": [{"id": "R12", "finding": "one sentence on what speaks against it or limits it"}],
+ "for_rewe": "one sentence on what this could mean for REWE, worded as a hypothesis (empty if no_evidence)"}
+Use at most 3 items per list. Use only ids that exist in the knowledge base."""
+
+
+def check_claim(claim: str, articles: list, trace: dict = None) -> dict:
+    """Checks a marketing assumption against the knowledge base. Never invents evidence."""
+    _LOCAL.usage = {}
+    system = f"{GROUNDING}\n\n<knowledge_base>\n{kb.for_prompt(articles)}\n</knowledge_base>"
+    raw = ask(system, [{"role": "user", "content": f"{CLAIM_TASK}\n\nAssumption: {claim}"}], max_tokens=1200)
+    match = re.search(r"\{.*\}", raw, re.S)
+    data = json.loads(match.group(0)) if match else {}
+    allowed = {a["id"] for a in articles}
+
+    def items(key):
+        out = []
+        for it in (data.get(key) or [])[:3]:
+            if isinstance(it, dict) and it.get("id") in allowed and it.get("finding"):
+                out.append({"id": it["id"], "finding": clean(kb.apply_citations(str(it["finding"]), allowed)[0])})
+        return out
+
+    evidence, counter = items("evidence"), items("counter_evidence")
+    verdict = data.get("verdict") if data.get("verdict") in VERDICTS else "no_evidence"
+    removed = 0
+    if verdict != "no_evidence" and not (evidence or counter):
+        verdict = "no_evidence"  # a verdict without a valid source is not accepted
+    stats = {}
+    summary = clean(kb.apply_citations(str(data.get("summary") or ""), allowed, stats)[0])
+    removed += stats.get("citations_removed", 0)
+    if verdict == "no_evidence":
+        evidence, counter = [], []
+        summary = summary or "None of the articles in the knowledge base addresses this assumption directly."
+    ids = list(dict.fromkeys([e["id"] for e in evidence] + [c["id"] for c in counter]))
+    result = {
+        "verdict": verdict, "summary": summary, "evidence": evidence, "counter_evidence": counter,
+        "for_rewe": clean(str(data.get("for_rewe") or "")) if verdict != "no_evidence" else "", "ids": ids,
+    }
+    if trace is not None:
+        trace.update(last_usage(), pool=len(articles), sources=ids, citations_kept=len(ids), citations_removed=removed)
+    return result
