@@ -82,6 +82,28 @@ Der Zeitplaner läuft bei GitHub und braucht die Schlüssel ein zweites Mal.
 3. Für den Test des Zeitplaners eine Automatisierung **Daily** auf die nächste volle Stunde legen und abwarten. Die Zustellung kommt bis etwa 30 Minuten nach der gewählten Zeit.
 
 
+
+## 8. Zuverlässige Zeitsteuerung mit cron-job.org
+
+GitHub startet geplante Abläufe bei kostenlosen Konten nur unregelmäßig, beobachtet wurden 7 bis 10 Stunden Abstand. cron-job.org startet sie stattdessen minutengenau.
+
+**GitHub-Schlüssel (nur für dieses Repository, darf nur Abläufe starten)**
+1. github.com → Profilbild → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**.
+2. Name `cron-job-retailmind`, Ablaufdatum 31.01.2027, **Only select repositories** → `retailmind-ai`.
+3. Unter **Repository permissions** → **Actions** → **Read and write**. Erstellen und den Schlüssel kopieren.
+
+**Zwei Aufträge bei cron-job.org (kostenloses Konto)**
+
+| Feld | Auftrag 1: Zeitplaner | Auftrag 2: App wach halten |
+|---|---|---|
+| URL | `https://api.github.com/repos/kiara-111/retailmind-ai/actions/workflows/scheduler.yml/dispatches` | `https://api.github.com/repos/kiara-111/retailmind-ai/actions/workflows/keep-awake.yml/dispatches` |
+| Zeitplan | alle 10 Minuten | alle 4 Stunden |
+| Request method (Advanced) | POST | POST |
+| Request body | `{"ref":"main"}` | `{"ref":"main"}` |
+| Headers | `Accept: application/vnd.github+json`, `Authorization: Bearer <Schlüssel>`, `X-GitHub-Api-Version: 2022-11-28` | gleich |
+
+Mit **Test run** prüfen: Erwartet wird Status **204**. Danach erscheint in GitHub unter Actions ein neuer Lauf.
+
 ## Analytics freischalten (einmalig)
 
 1. In Supabase links **SQL Editor**, dann **New query**.
